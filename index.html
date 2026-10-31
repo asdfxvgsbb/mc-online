@@ -9792,10 +9792,10 @@ function loadGameById(id){
     // 重置运行时状态
     won = false; paused = false;
     // 清理旧实体
-    monsters.forEach(m=>scene.remove(m.obj)); monsters=[];
-    villagers.forEach(v=>scene.remove(v.obj)); villagers=[];
+    monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
+    villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
     villageLights.forEach(l=>scene.remove(l)); villageLights=[];
-    if(portal && portal.mesh){ scene.remove(portal.mesh); portal = null; }
+    if(portal && portal.mesh){ disposeObj(portal.mesh); portal = null; }
 
     // ⚠️ 关键：先把 player.pos 移到存档出生点，否则 generateWorld 会按「上一个世界」的坐标生成地形
     player.pos.set(spawnX + 0.5, (typeof heightAt === 'function' ? heightAt(spawnX, spawnZ) : 10) + 2, spawnZ + 0.5);
@@ -9907,8 +9907,8 @@ function newWorld(seedStr, name){
   for(const k in toolInv) delete toolInv[k];
   selType='mat'; selMatIdx = 0; selToolIdx = -1;
 
-  monsters.forEach(m=>scene.remove(m.obj)); monsters=[];
-  villagers.forEach(v=>scene.remove(v.obj)); villagers=[];
+  monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
+  villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
   villageLights.forEach(l=>scene.remove(l)); villageLights=[];
   if(portal && portal.mesh){ scene.remove(portal.mesh); portal = null; }
   removeDragon(); inEnd = false; endPillars = [];
@@ -9964,8 +9964,8 @@ function restart(){
   hotbarSelIdx = 0;
   syncInv();
 
-  monsters.forEach(m=>scene.remove(m.obj)); monsters=[];
-  villagers.forEach(v=>scene.remove(v.obj)); villagers=[];
+  monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
+  villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
   if(portal && portal.mesh) scene.remove(portal.mesh);
   removeDragon(); inEnd = false; endPillars = [];
   resetPlayer();          // 先定出生点
@@ -10191,7 +10191,7 @@ function enterEnd(){
   if(portal && portal.mesh) portal.mesh.visible = false;
   // 清空主世界怪物
   monsters.forEach(m=>scene.remove(m.obj)); monsters = [];
-  animals.forEach(a=>scene.remove(a.obj)); animals = [];
+  animals.forEach(a=>disposeObj(a.obj)); animals = [];
   // 🌀 重置末地折跃门状态（每次进入都是新的挑战）
   dragonDefeated = false;
   endGateway = null;
@@ -16933,7 +16933,7 @@ function extExtendedModuleTickV79(){
     toast('🌋 你踏入了下界……（注意岩浆！）', 2500);
     // 清空主世界怪物
     monsters.forEach(m=>scene.remove(m.obj)); monsters = [];
-    animals.forEach(a=>scene.remove(a.obj)); animals = [];
+    animals.forEach(a=>disposeObj(a.obj)); animals = [];
     // 在高空 Y=40 生成下界平台（避免破坏主世界地形）
     const nx = 0, nz = 0, ny = 40;
     for(let dx=-10;dx<=10;dx++)for(let dz=-10;dz<=10;dz++){
