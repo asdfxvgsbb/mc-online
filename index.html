@@ -739,6 +739,16 @@ window.__mp = (function(){
   let _statusEl = null;
   let msgId = 1;
 
+  /* ---------- 🌐 同步状态 ---------- */
+  const known = new Set();          // 已知 peer id
+  let worldAdopted = false;
+  let isHost = false;              // true = this client created the room         // 是否已采用远端世界（种子/出生点）
+  let hostId = null;                // 房间内最早的人（种子权威）
+  let lastMonsterSend = 0;
+  let lastEditSend = 0;
+  let sentEdits = {};               // 已广播过的方块编辑 "x,y,z" -> "t"
+  let lastChestSend = 0;
+
   /* ---------- UI 状态条 ---------- */
   function ensureUI(){
     if(_statusEl) return _statusEl;
@@ -868,8 +878,8 @@ window.__mp = (function(){
           try{ ws.send(pktSubscribe('mc/' + CFG.room, msgId++)); }catch(e){}
           setStatus('🌐 已连接房间 ' + CFG.room);
           startPing();
-          // 广播自己上线
-          publish({ id:myId, name:myName, hello:1 });
+          // 广播自己上线，并请求对方的世界信息（种子/出生点）
+          publish({ id:myId, name:myName, hello:1, ask:1 });
         } else {
           connecting = false;
           nextServer();
@@ -884,8 +894,13 @@ window.__mp = (function(){
           try{
             const d = JSON.parse(payload);
             if(d && d.id && d.id !== myId){
-              if(d.bye) removePeer(d.id);
-              else if(d.hello){ publish({ id:myId, name:myName, hi:1 }); }
+              if(d.bye){ known.delete(d.id); removePeer(d.id); }
+              else if(d.hello){ known.add(d.id); publish({ id:myId, name:myName, hi:1 }); onPeerHello(d); }
+              else if(d.hi){ known.add(d.id); onPeerHello(d); }
+              else if(d.sp){ onPeerSpawn(d); }
+              else if(d.be){ onPeerBlockEdit(d.be); }
+              else if(d.ch){ onPeerChest(d.ch); }
+              else if(d.mo){ onPeerMonsters(d); }
               else onPeerPos(d);
             }
           }catch(e){}
@@ -925,8 +940,12 @@ window.__mp = (function(){
     CFG.room = (opts && opts.room) || CFG.room;
     myName = (opts && opts.name) || ('玩家' + myId.slice(1,4));
     if(opts && opts.color) myColor = opts.color;
+    isHost = !!(opts && opts.host);
     if(ws){ try{ ws.close(); }catch(e){} ws = null; }
     peers.forEach((p,id)=>removePeer(id));
+    known.clear();
+    worldAdopted = false; hostId = null;
+    sentEdits = {};
     retryCount = 0; serverIdx = 0;
     connect();
     return true;
@@ -968,6 +987,75 @@ window.__mp = (function(){
     setStatus('🌐 房间 ' + CFG.room + '：' + (peers.size+1) + '/' + CFG.maxPlayers + ' 人');
   }
 
+  /* =========================================================
+     🌍 世界同步（种子 / 出生点 / 方块编辑 / 箱子 / 怪物）
+     ---------------------------------------------------------
+     地形、雪层、宝箱位置全部由「种子 + 出生点」确定性生成，
+     所以只要这两样一致，区块/雪/箱子位置就自动一致。
+     ========================================================= */
+  function worldInfo(){
+    try{
+      if(typeof window.__getWorldInfo === 'function') return window.__getWorldInfo();
+    }catch(e){}
+    return null;
+  }
+  // peer hello/hi
+  function onPeerHello(d){
+    known.add(d.id);
+    if(d.ask) sendWorldInfo();
+  }
+  // broadcast own world info (seed + spawn + isHost)
+  function sendWorldInfo(){
+    const wi = worldInfo();
+    if(!wi) return;
+    publish({ id:myId, name:myName, hi:1, host:(isHost?1:0),
+              seed:wi.seed, spx:wi.spx, spz:wi.spz, sx:wi.sx, sz:wi.sz });
+  }
+  // host world is authoritative, others follow
+  function onPeerSpawn(d){
+    if(d.seed === undefined || d.spx === undefined) return;
+    if(isHost){
+      if(!worldAdopted){ worldAdopted = true; hostId = myId; }
+      sendWorldInfo();
+      return;
+    }
+    if(d.host){
+      if(worldAdopted && hostId === d.id) return;
+      worldAdopted = true; hostId = d.id;
+      try{
+        if(typeof window.__adoptWorld === 'function'){
+          window.__adoptWorld(d.seed, d.spx, d.spz, d.sx, d.sz);
+          setStatus('🌐 已同步房主世界（房间 ' + CFG.room + '）');
+        }
+      }catch(e){}
+      return;
+    }
+    if(myId < d.id){ if(!worldAdopted){ worldAdopted = true; hostId = myId; } sendWorldInfo(); return; }
+    if(worldAdopted) return;
+    worldAdopted = true; hostId = d.id;
+    try{
+      if(typeof window.__adoptWorld === 'function') window.__adoptWorld(d.seed, d.spx, d.spz, d.sx, d.sz);
+    }catch(e){}
+  }
+  // 方块编辑同步
+  function onPeerBlockEdit(list){
+    try{
+      if(typeof window.__applyBlockEdits === 'function') window.__applyBlockEdits(list);
+    }catch(e){}
+  }
+  // 箱子开启状态同步
+  function onPeerChest(list){
+    try{
+      if(typeof window.__applyChestStates === 'function') window.__applyChestStates(list);
+    }catch(e){}
+  }
+  // 怪物同步（只做视觉镜像，避免双方各自结算伤害）
+  function onPeerMonsters(d){
+    try{
+      if(typeof window.__applyRemoteMonsters === 'function') window.__applyRemoteMonsters(d.id, d.mo);
+    }catch(e){}
+  }
+
   /* ---------- 每帧 ---------- */
   function tick(dt){
     if(!ready || !joined) return;
@@ -980,6 +1068,36 @@ window.__mp = (function(){
           publish({ id:myId, name:myName,
                     x:+_p.pos.x.toFixed(2), y:+_p.pos.y.toFixed(2), z:+_p.pos.z.toFixed(2),
                     yaw:+(((window.__getYaw && window.__getYaw()) || 0)).toFixed(2) });
+        }
+      }catch(e){}
+    }
+    // 👹 怪物同步：5Hz
+    if(now - lastMonsterSend > 200){
+      lastMonsterSend = now;
+      try{
+        if(typeof window.__collectMonsters === 'function'){
+          const mo = window.__collectMonsters();
+          if(mo && mo.length) publish({ id:myId, mo:mo });
+        }
+      }catch(e){}
+    }
+    // 🧱 方块编辑同步：200ms 内积攒的改动一起发
+    if(now - lastEditSend > 200){
+      lastEditSend = now;
+      try{
+        if(typeof window.__collectBlockEdits === 'function'){
+          const list = window.__collectBlockEdits(sentEdits);
+          if(list && list.length) publish({ id:myId, be:list });
+        }
+      }catch(e){}
+    }
+    // 📦 箱子状态同步：1Hz
+    if(now - lastChestSend > 1000){
+      lastChestSend = now;
+      try{
+        if(typeof window.__collectChests === 'function'){
+          const list = window.__collectChests();
+          if(list && list.length) publish({ id:myId, ch:list });
         }
       }catch(e){}
     }
@@ -1081,7 +1199,7 @@ window.__mpUI = (function(){
       msg.textContent = '⏳ 正在连接 ' + code + ' …';
       msg.style.color = '#ff0';
       try{
-        window.__mp.init({ room:'mc-'+code, name:'玩家' });
+        window.__mp.init({ room:'mc-'+code, name:'玩家', host:false });
         msg.textContent = '✅ 已加入 ' + code + '，正在进入游戏…';
         msg.style.color = '#6f6';
         // 自动进入游戏（startGame 在主 IIFE 内，必须走 window.__startGame 桥）
@@ -1118,7 +1236,7 @@ window.__mpUI = (function(){
       if(noCfg()) return;
       const code = genCode();
       setGlobal('⏳ 正在连接联机服务器…', '#ff0');
-      const ok = window.__mp.init({ room:'mc-'+code, name:'房主' });
+      const ok = window.__mp.init({ room:'mc-'+code, name:'房主', host:true });
       if(ok){
         $('mpCodeBox').style.display = 'block';
         $('mpJoinBox').style.display = 'none';
@@ -1163,7 +1281,7 @@ window.__mpUI = (function(){
         msg.textContent = '⚠️ 房间号格式不对（4-8 位字母数字）';
         msg.style.color = '#f66'; return;
       }
-      const ok = window.__mp.init({ room:'mc-'+code, name:'玩家' });
+      const ok = window.__mp.init({ room:'mc-'+code, name:'玩家', host:false });
       msg.textContent = ok ? ('✅ 正在加入 ' + code) : '⚠️ 加入失败';
       msg.style.color = ok ? '#6f6' : '#f66';
       if(ok) setGlobal('✅ 正在加入房间 ' + code, '#6f6');
@@ -7778,6 +7896,19 @@ function initThree(){
 }
 
 function resetPlayer(){
+  // 🌐 联机：若房主已下发出生点，直接用（保证和队友在同一个地方、箱子位置一致）
+  if(window.__forceSpawn){
+    const fs = window.__forceSpawn;
+    window.__forceSpawn = null;
+    const h = heightAt(fs.px, fs.pz);
+    player.pos.set(fs.px + 0.5, h + 1.0, fs.pz + 0.5);
+    player.vel.set(0,0,0);
+    player.onGround = true;
+    player.hp = 100;
+    yaw = Math.PI/4; pitch = -0.12;
+    spawnX = fs.sx; spawnZ = fs.sz;
+    return;
+  }
   // 无限世界：在 (0,0) 附近找一块"地表且头顶开阔"的陆地出生。
   // 注意：出生点必须在区块生成前确定，但"头顶是否有方块"需要区块数据。
   // 解决：对候选点先临时生成其所在区块，检查通过后再用该点（后续 generateWorld 会清空重来）。
@@ -12064,29 +12195,41 @@ function updatePlayer(dt){
     player.pos.y += player.vel.y*dt;
   }
 
-  // 垂直阶段结束后：只在“真正踩到脚底支撑”时落地；不再主动托底，避免方块边缘卡一下
+  // 垂直阶段结束后：按「脚底足迹」9 点采样找支撑面，避免站在方块边缘掉下去
   if(!flying){
     ensureChunksAround(Math.floor(player.pos.x), Math.floor(player.pos.z));
-    const footY = Math.floor(player.pos.y - 0.08);
-    const solidNow = blockAt(Math.floor(player.pos.x), footY, Math.floor(player.pos.z));
-    const solidPrev = blockAt(Math.floor(player.pos.x), footY - 1, Math.floor(player.pos.z));
+    // 🦶 支撑面采样：中心 + 四边 + 四角（半径略小于碰撞半径 0.3，避免蹭到邻格）
+    const SR = 0.29;
+    const baseY = Math.floor(player.pos.y - 0.08);
+    const sx0 = player.pos.x, sz0 = player.pos.z;
+    const sampleX = [sx0, sx0-SR, sx0+SR, sx0-SR, sx0+SR];
+    const sampleZ = [sz0, sz0-SR, sz0+SR, sz0+SR, sz0-SR];
+    let supportTop = -Infinity;
+    for(let i=0;i<sampleX.length;i++){
+      const bx = Math.floor(sampleX[i]), bz = Math.floor(sampleZ[i]);
+      for(let dy=1; dy>=-2; dy--){
+        const b = blockAt(bx, baseY+dy, bz);
+        if(b && b.t !== BT.WATER){
+          const top = baseY + dy + 1;
+          // 只认“顶面不高于脚底太多”的方块（脚所在那一格是障碍物，跳过继续往下找）
+          if(top <= player.pos.y + 0.12){ if(top > supportTop) supportTop = top; break; }
+        }
+      }
+    }
     if(player.vel.y <= 0){
-      if(solidNow && solidNow.t !== BT.WATER){
-        // 正常落地
-        player.pos.y = footY + 1;
-        player.vel.y = 0;
-        player.onGround = true;
-      } else if(solidPrev && solidPrev.t !== BT.WATER){
-        // 🪜 1 格台阶：只在“正在下落 + 脚底离台阶顶面很近 + 不在跳”时站上去
-        //    防止跳到方块边缘时被强行抬高一下再掉下来
-        const supportTop = footY;  // 台阶顶面高度
+      if(supportTop > -Infinity){
         const gap = player.pos.y - supportTop;
-        // 只在下落贴面且没有跳跃输入时站台阶；刚跳起/跳边中绝不托底
-        if(!flying && player.vel.y <= -0.2 && gap > -0.02 && gap <= 0.10 && !jumpHeld && !keys['Space']){
+        if(gap <= 0.12 && gap > -0.9){
+          // 贴面或轻微穿透 → 站上去（含 1 格台阶）
           player.pos.y = supportTop;
           player.vel.y = 0;
           player.onGround = true;
+        } else {
+          // 支撑面还在脚下较远处 → 继续下落
+          player.onGround = false;
         }
+      } else {
+        player.onGround = false;
       }
     }
   }
@@ -12585,14 +12728,36 @@ function tryLockLandscape(){
 }
 function onResize(){
   if(!renderer) return;
-  camera.aspect = innerWidth/innerHeight;
+  const w = Math.max(1, innerWidth|0), h = Math.max(1, innerHeight|0);
+  // 🖥️ 修复转屏白屏：camera/renderer 尺寸必须用整数且同步设置
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio||1, 1.0));
+  renderer.setSize(w, h, false);
+  // 🖥️ 关键：转屏后 canvas 的 CSS 尺寸会被旧值撑住 → 画面变白/拉伸
+  const cv = document.getElementById('game');
+  if(cv){ cv.style.width = w + 'px'; cv.style.height = h + 'px'; }
   checkOrientation();
+  // 🖥️ 转屏瞬间 WebGL 上下文可能被回收 → 立即重绘一帧把画面填回来
+  try{ if(running && !paused && !won) renderer.render(scene, camera); }catch(e){}
 }
 addEventListener('resize', onResize);
-addEventListener('orientationchange', ()=>{ setTimeout(onResize, 200); });
+// 🖥️ 转屏：Android 上 orientationchange 触发时 innerWidth/Height 还没更新，
+//    必须多重延时补偿（200ms / 500ms / 900ms 各刷一次），否则会一直白屏
+addEventListener('orientationchange', ()=>{
+  onResize();
+  setTimeout(onResize, 200);
+  setTimeout(onResize, 500);
+  setTimeout(onResize, 900);
+});
+// 🖥️ 兜底：页面重新可见时（切后台再回来）也刷一次尺寸
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) setTimeout(onResize, 120);
+});
+// 🖥️ 兜底：visualViewport 变化（部分安卓 WebView 只发这个）
+if(window.visualViewport){
+  try{ window.visualViewport.addEventListener('resize', ()=>setTimeout(onResize, 60)); }catch(e){}
+}
 
 /* =========================================================
    入口
@@ -12617,6 +12782,149 @@ window.countItemG = countItem;
 window.consumeItemG = consumeItem;
 window.toastG = toast;
 window.__onPlayerUpdate = function(){ if(typeof updateArmorUI === 'function') updateArmorUI(); };
+
+/* =========================================================
+   🌐 联机世界同步桥（在主 IIFE 顶层，不受 load 回调异常影响）
+   ---------------------------------------------------------
+   设计要点：
+   1) 地形/雪层/宝箱位置 全部由「种子 + 出生点」确定性生成 →
+      双方种子和出生点一致，地形就天然一致，无需传区块数据。
+   2) 出生点同步：后进房间的人自动站到队友旁边。
+   3) 方块编辑（挖掘/放置）增量广播，先挖后放都能对上。
+   4) 怪物只做「视觉镜像」：远端怪物不参与本机伤害结算，避免双倍掉血。
+   ========================================================= */
+// —— 供联机模块读取当前世界信息 ——
+window.__getWorldInfo = function(){
+  return { seed: String(WORLD_SEED), spx: spawnX, spz: spawnZ, sx: spawnX, sz: spawnZ };
+};
+// —— 采用远端世界（种子 + 出生点），重新生成地形 ——
+window.__adoptWorld = function(seed, spx, spz, sx, sz){
+  try{
+    const wantSeed = String(seed);
+    const wantX = Math.round(spx), wantZ = Math.round(spz);
+    // 种子不同 → 整世界重建（地形/雪/村庄/宝箱全部一致）
+    if(String(WORLD_SEED) !== wantSeed){
+      applySeed(wantSeed);
+      window.__forceSpawn = { px:wantX, pz:wantZ, sx:(sx!==undefined?sx:wantX), sz:(sz!==undefined?sz:wantZ) };
+      if(typeof newWorld === 'function'){ newWorld(wantSeed, curSaveName || '联机世界'); }
+      else { resetPlayer(); generateWorld(); }
+      toast('🌐 已同步队友的世界');
+    } else {
+      // 同种子：只把玩家挪到队友出生点旁边
+      const h = heightAt(wantX, wantZ);
+      player.pos.set(wantX + 0.5, h + 1.0, wantZ + 0.5);
+      player.vel.set(0,0,0);
+      player.onGround = true;
+      spawnX = (sx!==undefined?sx:wantX); spawnZ = (sz!==undefined?sz:wantZ);
+      ensureChunksAround(wantX, wantZ);
+      toast('🌐 已在队友旁边出生');
+    }
+    window.__forceSpawn = null;
+  }catch(e){ if(window.__showErr) __showErr('[adoptWorld] ' + e.message); }
+};
+// —— 收集本机怪物位置（5Hz 广播）——
+window.__collectMonsters = function(){
+  const out = [];
+  try{
+    if(typeof monsters === 'undefined' || !monsters) return out;
+    for(let i=0;i<monsters.length && i<20;i++){
+      const m = monsters[i];
+      if(!m || !m.obj) continue;
+      out.push([ m.kind,
+                 +m.obj.position.x.toFixed(1), +m.obj.position.y.toFixed(1), +m.obj.position.z.toFixed(1),
+                 Math.round(m.hp) ]);
+    }
+  }catch(e){}
+  return out;
+};
+// —— 收集本机方块编辑增量 ——
+window.__collectBlockEdits = function(sentMap){
+  const out = [];
+  try{
+    if(typeof playerEdits === 'undefined' || !playerEdits) return out;
+    playerEdits.forEach((v, k)=>{
+      const sig = v.del ? 'D' : String(v.t);
+      if(sentMap[k] === sig) return;        // 已发过，跳过
+      sentMap[k] = sig;
+      out.push([k, v.del ? 0 : v.t]);
+      if(out.length >= 40) return;
+    });
+  }catch(e){}
+  return out;
+};
+// —— 应用远端方块编辑 ——
+window.__applyBlockEdits = function(list){
+  try{
+    if(!Array.isArray(list)) return;
+    for(const it of list){
+      const k = it[0], t = it[1];
+      const p = String(k).split(',');
+      const x = +p[0], y = +p[1], z = +p[2];
+      if(!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+      if(t === 0){
+        if(delBlock(x,y,z)) refreshVisibilityAround(x,y,z);
+      } else {
+        playerEdits.delete(K(x,y,z));
+        setBlockForce(x,y,z,t);
+        showInstance(x,y,z,t);
+        refreshVisibilityAround(x,y,z);
+        playerEdits.set(K(x,y,z), {t:t});
+      }
+    }
+  }catch(e){}
+};
+// —— 收集本机宝箱开启状态 ——
+window.__collectChests = function(){
+  const out = [];
+  try{
+    if(typeof chests === 'undefined' || !chests) return out;
+    for(const c of chests){ if(c.opened) out.push([c.x, c.y, c.z]); }
+  }catch(e){}
+  return out;
+};
+// —— 应用远端宝箱状态 ——
+window.__applyChestStates = function(list){
+  try{
+    if(!Array.isArray(list) || typeof chests === 'undefined') return;
+    for(const it of list){
+      const c = chests.find(c=>c.x===it[0]&&c.y===it[1]&&c.z===it[2]);
+      if(c && !c.opened) c.opened = true;
+    }
+  }catch(e){}
+};
+// —— 远端怪物视觉镜像 ——
+window.__remoteMobs = {};
+window.__applyRemoteMonsters = function(peerId, list){
+  try{
+    if(typeof scene === 'undefined' || !scene) return;
+    if(!Array.isArray(list)) return;
+    let bucket = window.__remoteMobs[peerId];
+    if(!bucket){ bucket = { objs:[], last:0 }; window.__remoteMobs[peerId] = bucket; }
+    bucket.last = performance.now();
+    // 数量对齐：多退少补
+    while(bucket.objs.length < list.length){
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.9,0.5),
+        new THREE.MeshLambertMaterial({color:0x8B0000, transparent:true, opacity:0.85}));
+      body.position.y = 0.85; g.add(body);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.42,0.42),
+        new THREE.MeshLambertMaterial({color:0x2E8B57, transparent:true, opacity:0.85}));
+      head.position.y = 1.5; g.add(head);
+      scene.add(g);
+      bucket.objs.push(g);
+    }
+    while(bucket.objs.length > list.length){
+      const g = bucket.objs.pop();
+      try{ scene.remove(g); }catch(e){}
+    }
+    for(let i=0;i<list.length;i++){
+      const it = list[i], g = bucket.objs[i];
+      if(!g) continue;
+      g.position.set(it[1], it[2], it[3]);
+      g.visible = true;
+    }
+  }catch(e){}
+};
 
 addEventListener('load',()=>{
   if(typeof THREE === 'undefined'){
