@@ -666,9 +666,319 @@
 <script>
 if (typeof THREE === 'undefined') {
   document.write('<script src="https://unpkg.com/three@0.128.0/build/three.min.js"><\/script>');
+  document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/script>');
 }
 </script>
 <script>
+/* =========================================================
+   🌐 联机模块 v1（Supabase Realtime，单房间最多 5 人）
+   ---------------------------------------------------------
+   设计原则：
+   1. 不阻塞主流程 —— 任何失败都静默降级为单机
+   2. 只同步「其他玩家」的位置/朝向/名字
+   3. 挖方块/放方块暂不同步（阶段 2 再做）
+   ========================================================= */
+/* 🔑 Supabase 配置（注册后把两个值填进来）
+   1. 打开 supabase.com 注册（GitHub 登录即可）
+   2. 新建项目，等 2 分钟初始化
+   3. Settings → API → 复制 Project URL 和 anon public key
+   4. 填到下面两行，重新上传即可联机
+*/
+window.__mpCfg = {
+  url: '',   // 例如 https://abcdefgh.supabase.co
+  key: ''    // 例如 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+};
+
+window.__mp = (function(){
+  const CFG = {
+    url: '',            // Supabase project URL
+    key: '',            // anon key
+    room: 'mc-room-1',  // 房间名
+    maxPlayers: 5,
+    sendHz: 12          // 每秒发 12 次位置
+  };
+  let client = null, channel = null;
+  let myId = 'p' + Math.random().toString(36).slice(2, 8);
+  let myName = '';
+  let peers = new Map();   // id -> {obj, x,y,z, yaw, name, lastSeen}
+  let ready = false, joined = false;
+  let lastSend = 0;
+  let _statusEl = null;
+
+  /* ---------- UI：左下角状态条 ---------- */
+  function ensureUI(){
+    if(_statusEl) return _statusEl;
+    const d = document.createElement('div');
+    d.id = 'mpStatus';
+    d.style.cssText = 'position:fixed;left:8px;bottom:56px;z-index:9999;'+
+      'font:12px/1.4 monospace;color:#fff;background:rgba(0,0,0,.55);'+
+      'padding:4px 8px;border-radius:6px;pointer-events:none;white-space:pre';
+    d.textContent = '🌐 单机模式';
+    document.body.appendChild(d);
+    _statusEl = d;
+    return d;
+  }
+  function setStatus(t){ try{ ensureUI().textContent = t; }catch(e){} }
+
+  /* ---------- 玩家模型（复用村民配色，换成玩家样式） ---------- */
+  function buildPeerMesh(name, color){
+    const g = new THREE.Group();
+    const skin = new THREE.MeshLambertMaterial({color: color || 0xE8B48A});
+    const shirt = new THREE.MeshLambertMaterial({color: 0x3E7BD6});
+    const pants = new THREE.MeshLambertMaterial({color: 0x2C3E70});
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.6,0.28), shirt);
+    body.position.y = 0.9; g.add(body);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.44,0.44,0.44), skin);
+    head.position.y = 1.42; g.add(head);
+    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.55,0.16), shirt);
+    armL.position.set(-0.33,0.92,0); g.add(armL);
+    const armR = armL.clone(); armR.position.x = 0.33; g.add(armR);
+    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18,0.6,0.18), pants);
+    legL.position.set(-0.12,0.3,0); g.add(legL);
+    const legR = legL.clone(); legR.position.x = 0.12; g.add(legR);
+    // 头顶名字
+    try{
+      const cv = document.createElement('canvas');
+      cv.width = 256; cv.height = 64;
+      const c = cv.getContext('2d');
+      c.font = 'bold 34px sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillStyle = 'rgba(0,0,0,.6)'; c.fillRect(0,0,256,64);
+      c.fillStyle = '#fff'; c.fillText(name || '玩家', 128, 34);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.minFilter = THREE.LinearFilter;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false}));
+      sp.scale.set(1.4, 0.35, 1);
+      sp.position.y = 2.0;
+      g.add(sp);
+    }catch(e){}
+    return g;
+  }
+
+  /* ---------- 初始化 ---------- */
+  function init(opts){
+    if(!opts || !opts.url || !opts.key){
+      setStatus('🌐 单机模式（未配置）');
+      return false;
+    }
+    CFG.url = opts.url.replace(/\/$/,'');
+    CFG.key = opts.key;
+    CFG.room = opts.room || CFG.room;
+    myName = opts.name || ('玩家' + myId.slice(1,4));
+
+    if(typeof supabase === 'undefined'){
+      setStatus('⚠️ 联机库未加载');
+      return false;
+    }
+    try{
+      client = supabase.createClient(CFG.url, CFG.key);
+    }catch(e){
+      setStatus('⚠️ 连接失败');
+      return false;
+    }
+    joinChannel();
+    return true;
+  }
+
+  function joinChannel(){
+    try{
+      channel = client.channel(CFG.room, {
+        config: { broadcast: { self: false }, presence: { key: myId } }
+      });
+
+      channel.on('broadcast', { event: 'pos' }, (msg)=>{
+        const d = msg && msg.payload;
+        if(!d || !d.id || d.id === myId) return;
+        onPeerPos(d);
+      });
+
+      channel.on('broadcast', { event: 'bye' }, (msg)=>{
+        const d = msg && msg.payload;
+        if(d && d.id) removePeer(d.id);
+      });
+
+      channel.on('presence', { event: 'sync' }, ()=>{
+        try{
+          const st = channel.presenceState();
+          const ids = Object.keys(st || {});
+          setStatus('🌐 房间 ' + CFG.room + '：' + ids.length + '/' + CFG.maxPlayers + ' 人');
+          if(ids.length > CFG.maxPlayers && !ids.slice(0,1).includes(myId)){
+            // 房间满了：自动退出
+            setStatus('🚫 房间已满（' + CFG.maxPlayers + '人）');
+            leave();
+          }
+        }catch(e){}
+      });
+
+      channel.on('presence', { event: 'leave' }, (p)=>{
+        try{
+          const keys = Object.keys((p && p.key) ? {k:p.key} : {});
+          if(p && p.key) removePeer(p.key);
+        }catch(e){}
+      });
+
+      channel.subscribe(async (status)=>{
+        if(status === 'SUBSCRIBED'){
+          ready = true; joined = true;
+          try{ await channel.track({ name: myName, id: myId, t: Date.now() }); }catch(e){}
+          setStatus('🌐 已连接 ' + CFG.room);
+        } else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
+          ready = false;
+          setStatus('⚠️ 连接断开，重连中…');
+        }
+      });
+    }catch(e){
+      setStatus('⚠️ 加入房间失败');
+    }
+  }
+
+  /* ---------- 收到别人位置 ---------- */
+  function getScene(){
+    if(typeof window.__getScene === 'function'){ try{ return window.__getScene(); }catch(e){} }
+    return window.scene || null;
+  }
+  function onPeerPos(d){
+    const sc = getScene();
+    if(!sc) return;
+    let p = peers.get(d.id);
+    if(!p){
+      if(peers.size >= CFG.maxPlayers) return;
+      const obj = buildPeerMesh(d.name || '玩家', d.color);
+      obj.position.set(d.x, d.y, d.z);
+      sc.add(obj);
+      p = { obj: obj, tx:d.x, ty:d.y, tz:d.z, tyaw: d.yaw||0, name: d.name, lastSeen: performance.now() };
+      peers.set(d.id, p);
+    } else {
+      p.tx = d.x; p.ty = d.y; p.tz = d.z;
+      p.tyaw = d.yaw || 0;
+      p.lastSeen = performance.now();
+    }
+  }
+
+  function removePeer(id){
+    const p = peers.get(id);
+    if(!p) return;
+    try{ const _s = getScene(); if(_s) _s.remove(p.obj); }catch(e){}
+    try{
+      p.obj.traverse(o=>{
+        if(o.geometry) o.geometry.dispose();
+        if(o.material){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); }
+      });
+    }catch(e){}
+    peers.delete(id);
+  }
+
+  /* ---------- 每帧：发送自己 + 插值别人 ---------- */
+  function tick(dt){
+    if(!ready || !joined) return;
+    const now = performance.now();
+
+    // 发送（限频）
+    if(now - lastSend > 1000/CFG.sendHz){
+      lastSend = now;
+      try{
+        const _p = (typeof window.__getPlayer === 'function') ? window.__getPlayer() : null;
+        if(_p && _p.pos){
+          channel.send({
+            type:'broadcast', event:'pos',
+            payload:{ id:myId, name:myName, x:+_p.pos.x.toFixed(2),
+                      y:+_p.pos.y.toFixed(2), z:+_p.pos.z.toFixed(2),
+                      yaw:+(window.yaw||0).toFixed(2) }
+          });
+        }
+      }catch(e){}
+    }
+
+    // 插值 + 超时清理
+    const k = Math.min(1, dt*10);
+    peers.forEach((p, id)=>{
+      try{
+        p.obj.position.x += (p.tx - p.obj.position.x) * k;
+        p.obj.position.y += (p.ty - p.obj.position.y) * k;
+        p.obj.position.z += (p.tz - p.obj.position.z) * k;
+        p.obj.rotation.y = p.tyaw;
+      }catch(e){}
+      if(now - p.lastSeen > 8000) removePeer(id);   // 8 秒没消息 → 移除
+    });
+  }
+
+  /* ---------- 离开 ---------- */
+  function leave(){
+    joined = false; ready = false;
+    try{ if(channel) channel.send({type:'broadcast', event:'bye', payload:{id:myId}}); }catch(e){}
+    try{ if(channel) client.removeChannel(channel); }catch(e){}
+    channel = null;
+    peers.forEach((p,id)=>removePeer(id));
+    setStatus('🌐 已退出联机');
+  }
+
+  function peerCount(){ return peers.size; }
+  function isOnline(){ return ready && joined; }
+
+  return { init, tick, leave, peerCount, isOnline, CFG,
+           get myId(){ return myId; }, get myName(){ return myName; } };
+})();
+
+/* 🌐 联机配置 UI（右下角按钮 + 弹窗） */
+window.__mpUI = (function(){
+  let built = false;
+  function build(){
+    if(built) return; built = true;
+    const btn = document.createElement('div');
+    btn.id = 'mpBtn';
+    btn.textContent = '🌐';
+    btn.style.cssText = 'position:fixed;right:8px;bottom:120px;z-index:9998;'+
+      'width:40px;height:40px;border-radius:50%;background:rgba(30,120,220,.85);'+
+      'color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;'+
+      'user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4)';
+    btn.onclick = open;
+    document.body.appendChild(btn);
+  }
+  function open(){
+    let p = document.getElementById('mpPanel');
+    if(p){ p.style.display = 'flex'; return; }
+    p = document.createElement('div');
+    p.id = 'mpPanel';
+    p.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.75);'+
+      'display:flex;align-items:center;justify-content:center;font:14px sans-serif;color:#fff';
+    p.innerHTML = `
+      <div style="background:#1e2430;padding:18px;border-radius:12px;width:280px;max-width:88vw">
+        <div style="font-size:16px;font-weight:bold;margin-bottom:12px">🌐 联机设置</div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:12px;opacity:.7;margin-bottom:4px">你的昵称</div>
+          <input id="mpName" maxlength="10" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#0f141c;color:#fff" value="玩家">
+        </div>
+        <div style="margin-bottom:14px">
+          <div style="font-size:12px;opacity:.7;margin-bottom:4px">房间号（朋友填同一个）</div>
+          <input id="mpRoom" maxlength="20" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#0f141c;color:#fff" value="room1">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="mpJoin" style="flex:1;padding:10px;border-radius:6px;border:0;background:#1e78dc;color:#fff;font-size:14px">加入</button>
+          <button id="mpClose" style="flex:1;padding:10px;border-radius:6px;border:0;background:#444;color:#fff;font-size:14px">关闭</button>
+        </div>
+        <div id="mpMsg" style="margin-top:10px;font-size:12px;opacity:.8;min-height:16px"></div>
+      </div>`;
+    document.body.appendChild(p);
+    document.getElementById('mpClose').onclick = ()=>{ p.style.display='none'; };
+    document.getElementById('mpJoin').onclick = ()=>{
+      const nm = (document.getElementById('mpName').value || '玩家').trim();
+      const rm = (document.getElementById('mpRoom').value || 'room1').trim();
+      const msg = document.getElementById('mpMsg');
+      if(!window.__mpCfg || !window.__mpCfg.url){
+        msg.textContent = '⚠️ 未配置 Supabase，当前为单机';
+        msg.style.color = '#ffb454';
+        return;
+      }
+      const ok = window.__mp.init({ url:window.__mpCfg.url, key:window.__mpCfg.key, room:'mc-'+rm, name:nm });
+      msg.textContent = ok ? ('✅ 正在连接 mc-'+rm) : '⚠️ 连接失败';
+      msg.style.color = ok ? '#6f6' : '#f66';
+    };
+  }
+  function init(){ try{ build(); }catch(e){} }
+  return { init, open };
+})();
+
+
 (function(){
 "use strict";
 
@@ -5824,6 +6134,7 @@ let player = { pos:null, vel:null, onGround:false, hp:100, armor:0, food:20, xp:
 
 let keys = {};
 let yaw = 0, pitch = 0;
+Object.defineProperty(window, 'yaw', { get:()=>yaw, set:v=>{yaw=v;} });   // 🌐 联机读取朝向
 let LOOK_SENS = 1.0;    // 🔧 视角灵敏度（设置面板可调节，1.0 = 默认；0.3 慢，3.0 快）
 
 let monsters = [], chests = [];
@@ -9210,6 +9521,8 @@ function startGame(){
     toast('🌲 从砍树开始，一路发展到钻石吧！', 2600);
     updateQuest();
     if(typeof startAutoSave === 'function') startAutoSave();
+    // 🌐 联机 UI 初始化（失败静默，不影响单机）
+    try{ if(window.__mpUI) window.__mpUI.init(); }catch(e){}
   }
 }
 function restart(){
@@ -11915,6 +12228,7 @@ function animate(){
     if(typeof extModuleTickV4 === 'function' && (worldTime % 8 < dt)) extModuleTickV4();
     if(typeof extCreatureModuleTick === 'function' && (worldTime % 3 < dt)) extCreatureModuleTick();
     updateFood(dt);      // 🍗 饥饿/回血
+    try{ if(window.__mp) window.__mp.tick(dt); }catch(e){}   // 🌐 联机同步
     updatePlayer(dt);
     updateHand(dt);      // ✋ 手持物品跟随/摆动
     _selBoxTimer -= dt;
@@ -16848,6 +17162,7 @@ window.__t = {
 // 🌉 桥：把主 IIFE 内部 API 暴露给外部的盔甲 IIFE
 
 window.__getPlayer = function(){ return player; };
+window.__getScene  = function(){ return scene; };   // 🌐 联机模块取场景
 window.giveItemG = giveItem;
 window.countItemG = countItem;
 window.consumeItemG = consumeItem;
