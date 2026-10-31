@@ -7132,7 +7132,7 @@ function unloadFarChunks(px, pz){
 // 初始化世界（替代旧 generateWorld）
 function generateWorld(){
   blocks.clear(); solid.clear();
-  for(const k in instMeshes){ scene.remove(instMeshes[k].mesh); }
+  for(const k in instMeshes){ disposeObj(instMeshes[k].mesh); }
   instMeshes = {};
   loadedChunks.clear();
   chunkBlocks.clear();       // 重置按块索引
@@ -7367,11 +7367,11 @@ function buildVillageAt(cx, cz){
 // 只保留玩家附近的村民，远处村庄不生成村民实体（省性能）
 function rebuildVillagersFromData(){
   // 移除旧村民
-  villagers.forEach(v=>scene.remove(v.obj));
+  villagers.forEach(v=>disposeObj(v.obj));
   villagers = [];
   // 🛡️ 批次4：同时清理旧铁傀儡
   if(typeof golems !== 'undefined'){
-    golems.forEach(g=>scene.remove(g.obj));
+    golems.forEach(g=>disposeObj(g.obj));
     golems = [];
   }
   const px = player.pos ? player.pos.x : 0;
@@ -7823,7 +7823,7 @@ function isBlockVisible(x, y, z, t){
 }
 
 function rebuildAllInstances(){
-  for(const k in instMeshes){ scene.remove(instMeshes[k].mesh); }
+  for(const k in instMeshes){ disposeObj(instMeshes[k].mesh); }
   instMeshes = {}; slotIndex = {}; freeSlots = {};
   if(player && player.pos){ renderCenterCX = chunkOf(player.pos.x); renderCenterCZ = chunkOf(player.pos.z); }
 
@@ -8097,7 +8097,7 @@ function spawnPortal(){
   // 清理旧的传送门资源
   if(portal){
     if(portal.mesh) disposeObj(portal.mesh);
-    if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>scene.remove(m));
+    if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>disposeObj(m));
   }
   // 🌀 末地传送门祭坛：默认不摆出来；必须先用末影之眼定位到随机要塞后，再重建到要塞
   // 这样避免“出生点附近直接能看到框架”，更符合原版定位流程
@@ -9910,7 +9910,7 @@ function newWorld(seedStr, name){
   monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
   villageLights.forEach(l=>disposeObj(l)); villageLights=[];
-  if(portal && portal.mesh){ scene.remove(portal.mesh); portal = null; }
+  if(portal && portal.mesh){ disposeObj(portal.mesh); portal = null; }
   removeDragon(); inEnd = false; endPillars = [];
 
   worldBiomes = {};
@@ -10190,7 +10190,7 @@ function enterEnd(){
   // 隐藏主世界传送门
   if(portal && portal.mesh) portal.mesh.visible = false;
   // 清空主世界怪物
-  monsters.forEach(m=>scene.remove(m.obj)); monsters = [];
+  monsters.forEach(m=>disposeObj(m.obj)); monsters = [];
   animals.forEach(a=>disposeObj(a.obj)); animals = [];
   // 🌀 重置末地折跃门状态（每次进入都是新的挑战）
   dragonDefeated = false;
@@ -12564,7 +12564,7 @@ function updateMonsters(dt){
     const m = monsters[i];
     if(isNight === false && m.kind !== 'drowned' && m.kind !== 'husk' && m.kind !== 'stray'){
       m.hp -= dt*8;
-      if(m.hp <= 0){ scene.remove(m.obj); monsters.splice(i,1); continue; }
+      if(m.hp <= 0){ disposeObj(m.obj); monsters.splice(i,1); continue; }
     }
     const dx = player.pos.x - m.obj.position.x;
     const dz = player.pos.z - m.obj.position.z;
@@ -16932,7 +16932,7 @@ function extExtendedModuleTickV79(){
     S.portal();
     toast('🌋 你踏入了下界……（注意岩浆！）', 2500);
     // 清空主世界怪物
-    monsters.forEach(m=>scene.remove(m.obj)); monsters = [];
+    monsters.forEach(m=>disposeObj(m.obj)); monsters = [];
     animals.forEach(a=>disposeObj(a.obj)); animals = [];
     // 在高空 Y=40 生成下界平台（避免破坏主世界地形）
     const nx = 0, nz = 0, ny = 40;
@@ -16979,7 +16979,7 @@ function extExtendedModuleTickV79(){
     portalCooldown = 4.0;   // 🌀 返回后 4 秒冷却
     S.portal();
     toast('🌍 你回到了主世界', 2000);
-    netherMonsters.forEach(m=>scene.remove(m.obj)); netherMonsters = [];
+    netherMonsters.forEach(m=>disposeObj(m.obj)); netherMonsters = [];
     if(netherOrigin){ player.pos.set(netherOrigin.x, netherOrigin.y+1, netherOrigin.z); player.vy = 0; }
     ensureChunksAround(player.pos.x, player.pos.z);
     updateQuest();
@@ -17066,7 +17066,7 @@ function extExtendedModuleTickV79(){
   // 重置折跃门（离开/重进末地时调用）
   function resetEndGateway(){
     if(endGateway && endGateway.meshes){
-      endGateway.meshes.forEach(m=>{ try{ scene.remove(m); }catch(e){} });
+      endGateway.meshes.forEach(m=>{ try{ disposeObj(m); }catch(e){} });
     }
     endGateway = null;
     _mcWinDone = false;
@@ -17309,7 +17309,7 @@ function extExtendedModuleTickV79(){
     // 清理旧的传送门资源
     if(portal){
       if(portal.mesh) disposeObj(portal.mesh);
-      if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>scene.remove(m));
+      if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>disposeObj(m));
       portal = null;
     }
     // 要塞地面平台
@@ -17461,7 +17461,7 @@ function extExtendedModuleTickV79(){
     const under = blockAt(dragonEgg.x, dragonEgg.y - 1, dragonEgg.z);
     if(under && under.t === BT.TORCH){
       delBlock(dragonEgg.x, dragonEgg.y, dragonEgg.z);
-      if(dragonEggMesh){ try{ scene.remove(dragonEggMesh); }catch(e){} dragonEggMesh=null; }
+      if(dragonEggMesh){ try{ disposeObj(dragonEggMesh); }catch(e){} dragonEggMesh=null; }
       dragonEgg = null;
       addMat("dragon_egg", 1);
       S.win();
@@ -17472,7 +17472,7 @@ function extExtendedModuleTickV79(){
       while(fy > 1 && !blockAt(dragonEgg.x, fy-1, dragonEgg.z)){ fy--; }
       if(fy < dragonEgg.y){
         delBlock(dragonEgg.x, dragonEgg.y, dragonEgg.z);
-        if(dragonEggMesh){ try{ scene.remove(dragonEggMesh); }catch(e){} dragonEggMesh=null; }
+        if(dragonEggMesh){ try{ disposeObj(dragonEggMesh); }catch(e){} dragonEggMesh=null; }
         dragonEgg = null;
         toast("💔 龙蛋在掉落的瞬间摔碎了！（需要先放火把接住）", 3000);
       }
