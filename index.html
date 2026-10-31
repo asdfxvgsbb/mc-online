@@ -9795,8 +9795,8 @@ function saveGame(){
     };
     // ⚠️ 原来写的是 syncExtendedToSave({})，传的是临时空对象，
     //    扩展统计/扩展成就被写进去后立刻丢弃，导致读档后这些数据全部丢失。
-    //    必须传真正的 data 对象。
-    if(typeof syncExtendedToSave === 'function') syncExtendedToSave(data);
+    //    必须传真正的 data 对象，并且走 window 桥（该函数在扩展模块独立 IIFE 内）。
+    if(typeof window.__syncExtendedToSave === 'function') window.__syncExtendedToSave(data);
     data.difficulty = DIFFICULTY ? DIFFICULTY.icon : '⚖️';   // ⚙️ 批次8：难度持久化（按图标还原）
     localStorage.setItem(SAVE_PREFIX+curSaveId, JSON.stringify(data));
     // 更新列表
@@ -9887,7 +9887,8 @@ function loadGameById(id){
       if(sc) c.opened = !!sc[3];
     });
     // 📥 还原扩展统计 / 扩展成就（否则读档后这些数据全部丢失）
-    if(typeof restoreExtendedFromSave === 'function') restoreExtendedFromSave(d);
+    //    注意必须走 window 桥：restoreExtendedFromSave 定义在扩展模块的独立 IIFE 里
+    if(typeof window.__restoreExtendedFromSave === 'function') window.__restoreExtendedFromSave(d);
     // 切存档时重置要塞定位，避免沿用上一个存档的随机盐
     if(window.__stronghold && window.__stronghold.reset) window.__stronghold.reset();
     if(d.portal){
@@ -11612,6 +11613,8 @@ function restoreExtendedFromSave(fromSave){
     }
   }catch(e){}
 }
+// 🔑 必须挂到 window：loadGameById 在主 IIFE 里，访问不到这个独立 IIFE 的局部函数
+try{ window.__restoreExtendedFromSave = restoreExtendedFromSave; }catch(e){}
 function topExtendedPlaced(){
   const arr = Object.keys(EXTENDED_TRACK.placedByType).map(k=>[k, EXTENDED_TRACK.placedByType[k]|0]).sort((a,b)=>b[1]-a[1]);
   return arr.slice(0,4);
@@ -11730,6 +11733,8 @@ function syncExtendedToSave(data){
   data.extStats = snapshotExtendedStats();
   data.extAchDone = extAchDone;
 }
+// 🔑 必须挂到 window：saveGame 在主 IIFE 里，访问不到这个独立 IIFE 的局部函数
+try{ window.__syncExtendedToSave = syncExtendedToSave; }catch(e){}
 function setupExtendedUI(){
   if(document.getElementById('extStatsPanel')) return;
   const panel=document.createElement('div');
