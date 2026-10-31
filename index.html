@@ -1138,19 +1138,15 @@ window.__mp = (function(){
             }
           }
         }catch(e){}
-        // 🎯 ② y 只能有一个目标值，否则「网络插值往回拉 + 贴地往上推」会僵在半空
-        let targetY = p.ty;
-        try{
-          if(typeof window.__groundYAt === 'function'){
-            const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z, p.ty);
-            if(gy !== null && gy !== undefined){
-              // 只校正「明显悬空」：比本地地面高出 2.5 格以上
-              // 低于地面说明他在挖洞/地下，绝不能把他拉到地表
-              if(targetY - gy > 2.5) targetY = gy;
-            }
-          }
-        }catch(e){}
-        p.obj.position.y += (targetY - p.obj.position.y) * k;
+        // 🎯 远端玩家直接采信他自己上报的 y，不再做「贴地校正」。
+        //    种子同步修好后，双方地形本来就完全一致：他那边站在哪，
+        //    这边同一坐标就是同一个地面，直接用他的 y 才是对的。
+        //    旧的那套贴地校正反而会出错：
+        //      · 他站在树顶/高塔上 → 被强行拉回地表
+        //      · 他在挖洞/矿道里   → 被硬吸上来
+        //    那些都是「地形不一致」时代的补丁，必须去掉。
+        //    （区块加载保留：否则他脚下方块没生成，看着才会悬空）
+        p.obj.position.y += (p.ty - p.obj.position.y) * k;
       }catch(e){}
       if(now - p.lastSeen > 8000) removePeer(id);
     });
