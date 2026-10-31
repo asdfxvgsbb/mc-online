@@ -13045,7 +13045,7 @@ window.__applyRemoteMonsters = function(peerId, list){
     }
     while(bucket.objs.length > list.length){
       const g = bucket.objs.pop();
-      try{ scene.remove(g); }catch(e){}
+      try{ disposeObj(g); }catch(e){}   // ♻️ 必须释放，否则每次数量波动都漏一组几何体
     }
     for(let i=0;i<list.length;i++){
       const it = list[i], g = bucket.objs[i];
