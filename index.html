@@ -849,24 +849,29 @@ window.__mp = (function(){
     const s = SERVERS[serverIdx % SERVERS.length];
     const url = 'wss://' + s.host + ':' + s.port + s.path;
     setStatus('⏳ 连接 ' + s.host + ' …');
+    const mySeq = connSeq;
+    let sock = null;
     try{
-      ws = new WebSocket(url, 'mqtt');
-      ws.binaryType = 'arraybuffer';
+      sock = new WebSocket(url, 'mqtt');
+      sock.binaryType = 'arraybuffer';
+      ws = sock;
     }catch(e){
       connecting = false;
       nextServer();
       return;
     }
     const timeout = setTimeout(()=>{
-      if(connecting && !ready){ try{ ws.close(); }catch(e){} }
+      if(connecting && !ready){ try{ sock.close(); }catch(e){} }
     }, 8000);
 
-    ws.onopen = ()=>{
+    sock.onopen = ()=>{
+      if(mySeq !== connSeq) return;
       clearTimeout(timeout);
       setStatus('⏳ 握手…');
-      try{ ws.send(pktConnect(myId)); }catch(e){}
+      try{ sock.send(pktConnect(myId)); }catch(e){}
     };
-    ws.onmessage = (ev)=>{
+    sock.onmessage = (ev)=>{
+      if(mySeq !== connSeq) return;
       const buf = new Uint8Array(ev.data);
       if(!buf.length) return;
       const type = buf[0] >> 4;
@@ -875,7 +880,7 @@ window.__mp = (function(){
           connecting = false;
           ready = true; joined = true;
           retryCount = 0;
-          try{ ws.send(pktSubscribe('mc/' + CFG.room, msgId++)); }catch(e){}
+          try{ sock.send(pktSubscribe('mc/' + CFG.room, msgId++)); }catch(e){}
           setStatus('🌐 已连接房间 ' + CFG.room);
           startPing();
           // 广播自己上线，并请求对方的世界信息（种子/出生点）
@@ -907,11 +912,13 @@ window.__mp = (function(){
         }
       }
     };
-    ws.onerror = ()=>{
+    sock.onerror = ()=>{
+      if(mySeq !== connSeq) return;
       clearTimeout(timeout);
       connecting = false;
     };
-    ws.onclose = ()=>{
+    sock.onclose = ()=>{
+      if(mySeq !== connSeq) return;
       clearTimeout(timeout);
       connecting = false;
       ready = false; joined = false;
@@ -936,12 +943,22 @@ window.__mp = (function(){
   }
 
   /* ---------- 初始化 ---------- */
+  let connSeq = 0;                  // 🔑 连接序号：防止旧连接的 onclose 影响新连接
   function init(opts){
     CFG.room = (opts && opts.room) || CFG.room;
     myName = (opts && opts.name) || ('玩家' + myId.slice(1,4));
     if(opts && opts.color) myColor = opts.color;
     isHost = !!(opts && opts.host);
-    if(ws){ try{ ws.close(); }catch(e){} ws = null; }
+    // 🔑 先让旧连接彻底失效（不触发重连），再建新连接
+    connSeq++;
+    ready = false; joined = false; connecting = false;
+    if(ws){
+      const old = ws;
+      ws = null;
+      try{ old.onopen = old.onmessage = old.onerror = old.onclose = null; }catch(e){}
+      try{ old.close(); }catch(e){}
+    }
+    stopPing();
     peers.forEach((p,id)=>removePeer(id));
     known.clear();
     worldAdopted = false; hostId = null;
