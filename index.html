@@ -12596,35 +12596,75 @@ addEventListener('orientationchange', ()=>{ setTimeout(onResize, 200); });
 /* =========================================================
    入口
    ========================================================= */
+// 🌉 桥：把主 IIFE 内部 API 暴露给外部的盔甲 IIFE
+// ⚠️ 必须在 load 回调之外（IIFE 顶层）执行，
+//    否则 load 回调内任何一处抛错都会导致桥接全部失效
+window.__getPlayer = function(){ return player; };
+window.__getScene  = function(){ return scene; };
+window.__startGame = function(){
+  try{
+    // 若还没进过世界（running=false 且没有任何方块），先自动建一个世界
+    if(!running && (!blocks || blocks.size === 0)){
+      try{ if(typeof newWorld === 'function') newWorld(String(Date.now()), '联机世界'); }catch(e){}
+    }
+    startGame();
+  }catch(e){ if(window.__showErr) __showErr('[__startGame] ' + e.message); }
+};
+window.__getYaw = function(){ return yaw; };   // 🌐 联机同步朝向
+window.giveItemG = giveItem;
+window.countItemG = countItem;
+window.consumeItemG = consumeItem;
+window.toastG = toast;
+window.__onPlayerUpdate = function(){ if(typeof updateArmorUI === 'function') updateArmorUI(); };
+
 addEventListener('load',()=>{
   if(typeof THREE === 'undefined'){
     document.querySelector('#overlay .card').innerHTML =
       '<h1>⚠️ 无法加载 3D 引擎</h1><p>请连接网络后刷新页面。<br>游戏需要联网加载 Three.js。</p>';
     return;
   }
-  checkOrientation();
-  tryLockLandscape();
+  // 🛡️ 分段错误隔离：任何一步失败都不阻断后续，并把错误显示到 __errBox
+  const step = (name, fn) => {
+    try{ fn(); return true; }
+    catch(e){
+      if(window.__showErr) __showErr('[BOOT:' + name + '] ' + e.message);
+      else console.error('[BOOT:' + name + ']', e);
+      return false;
+    }
+  };
+  step('orientation', ()=>{ checkOrientation(); tryLockLandscape(); });
 
-  initThree();
-  worldBiomes = {};
-  resetPlayer();          // 先定出生点
-  lastChunkX = 1e9; lastChunkZ = 1e9; lastNearVillageCount = -1;
-  generateWorld();        // 按出生点生成周围区块
-  spawnPortal();
-  spawnChests();
+  // 关键：initThree 失败则无法继续（没有渲染器）
+  const threeOK = step('initThree', ()=>{ initThree(); });
+  if(!threeOK){
+    if(window.__showErr) __showErr('[BOOT] 3D 初始化失败，无法进入游戏');
+    return;
+  }
+  step('world', ()=>{
+    worldBiomes = {};
+    resetPlayer();          // 先定出生点
+    lastChunkX = 1e9; lastChunkZ = 1e9; lastNearVillageCount = -1;
+    generateWorld();        // 按出生点生成周围区块
+    spawnPortal();
+    spawnChests();
+  });
 
   // 初始材料清零
-  hotbarSlots = new Array(HOTBAR_SIZE).fill(null);
-  bagSlots    = new Array(BAG_SIZE).fill(null);
-  hotbarSelIdx = 0;
-  syncInv();
-  TOOLS.forEach(t => toolInv[t.id] = 0);
+  step('inv', ()=>{
+    hotbarSlots = new Array(HOTBAR_SIZE).fill(null);
+    bagSlots    = new Array(BAG_SIZE).fill(null);
+    hotbarSelIdx = 0;
+    syncInv();
+    TOOLS.forEach(t => toolInv[t.id] = 0);
+  });
 
-  buildHotbar();
-  updateHP(); updateTop(); updateClock();
-  updateQuest(); refreshHotbarHighlight();
-  setupTouch(); setupDesktop();
-  animate();
+  step('hud', ()=>{
+    buildHotbar();
+    updateHP(); updateTop(); updateClock();
+    updateQuest(); refreshHotbarHighlight();
+  });
+  step('input', ()=>{ setupTouch(); setupDesktop(); });
+  step('animate', ()=>{ animate(); });
 
   document.getElementById('startBtn2').onclick = ()=>{ restart(); };
   // ❤️ 死亡复活按钮
@@ -17411,25 +17451,6 @@ window.__t = {
   matCount(){ return MAT.length; }
 };
 
-// 🌉 桥：把主 IIFE 内部 API 暴露给外部的盔甲 IIFE
-
-window.__getPlayer = function(){ return player; };
-window.__getScene  = function(){ return scene; };
-window.__startGame = function(){
-  try{
-    // 若还没进过世界（running=false 且没有任何方块），先自动建一个世界
-    if(!running && (!blocks || blocks.size === 0)){
-      try{ if(typeof newWorld === 'function') newWorld(String(Date.now()), '联机世界'); }catch(e){}
-    }
-    startGame();
-  }catch(e){ if(window.__showErr) __showErr('[__startGame] ' + e.message); }
-};
-window.__getYaw = function(){ return yaw; };   // 🌐 联机同步朝向
-window.giveItemG = giveItem;
-window.countItemG = countItem;
-window.consumeItemG = consumeItem;
-window.toastG = toast;
-window.__onPlayerUpdate = function(){ if(typeof updateArmorUI === 'function') updateArmorUI(); };
 
 });
 
