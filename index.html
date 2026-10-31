@@ -13203,6 +13203,10 @@ addEventListener('load',()=>{
     updateQuest(); refreshHotbarHighlight();
   });
   step('input', ()=>{ setupTouch(); setupDesktop(); });
+  // 📂 主菜单存档列表：必须在首次加载时就渲染一次，
+  //    否则「📂 我的存档」区域是空白，玩家看不到任何存档、也就无法读档
+  //    （原来只有「返回主菜单」和「删除存档」才会调用 renderSaveList）
+  step('saves', ()=>{ if(typeof renderSaveList === 'function') renderSaveList(); });
   step('animate', ()=>{ animate(); });
 
   document.getElementById('startBtn2').onclick = ()=>{ restart(); };
