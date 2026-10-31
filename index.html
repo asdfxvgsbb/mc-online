@@ -368,6 +368,22 @@
 </style>
 </head>
 <body>
+<!-- 🐛 全局错误显示（排查白屏用） -->
+<div id="__errBox" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#400;color:#fff;font:12px/1.4 monospace;padding:8px;max-height:40vh;overflow:auto;white-space:pre-wrap"></div>
+<script>
+window.__errs = [];
+function __showErr(msg){
+  window.__errs.push(msg);
+  var b = document.getElementById('__errBox');
+  if(b){ b.style.display='block'; b.textContent = window.__errs.slice(-5).join('\n---\n'); }
+}
+window.addEventListener('error', function(e){
+  __showErr('[ERROR] ' + (e.message||'') + ' @' + (e.filename||'').split('/').pop() + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', function(e){
+  __showErr('[PROMISE] ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+});
+</script>
 <canvas id="game"></canvas>
 <div id="crosshair"></div>
 <div id="digRing"></div>
@@ -495,6 +511,8 @@
       <button id="randSeedBtn" style="margin-top:6px;width:100%">🎲 随机 64 位种子</button>
     </div>
 
+    <!-- 🌐 加入联机（主菜单入口） -->
+    <div id="mpJoinMenuBox" style="margin-top:12px;text-align:left;border-top:2px solid #333;padding-top:10px"></div>
     <!-- 存档列表 -->
     <div id="saveListBox" style="margin-top:12px;text-align:left">
       <p><b class="hl">📂 我的存档</b></p>
@@ -1039,6 +1057,46 @@ window.__mpUI = (function(){
     bind();
   }
 
+  /* ---------- 主菜单：加入房间区块 ---------- */
+  function buildJoinMenu(){
+    const box = document.getElementById('mpJoinMenuBox');
+    if(!box || box.dataset.built === '1') return;
+    box.dataset.built = '1';
+    box.innerHTML = `
+      <p style="margin-bottom:6px"><b style="color:#7CFC00">🌐 加入联机房间</b></p>
+      <div style="font-size:11px;opacity:.75;margin-bottom:6px">输入朋友给的 6 位房间号</div>
+      <input id="mpJoinInput2" maxlength="8" placeholder="例如 A3K9Z2"
+        style="width:100%;box-sizing:border-box;padding:10px;margin-bottom:6px;border:2px solid #000;background:#1b1e28;color:#fff;font-size:18px;text-align:center;letter-spacing:4px;text-transform:uppercase">
+      <button class="green" id="mpJoinGo2" style="width:100%">🔗 加入房间</button>
+      <div id="mpJoinMsg2" style="font-size:11px;min-height:14px;margin-top:5px"></div>`;
+    const $ = (id)=>document.getElementById(id);
+    const msg = $('mpJoinMsg2');
+    const doJoin = ()=>{
+      const code = ($('mpJoinInput2').value || '').trim().toUpperCase();
+      if(!/^[A-Z0-9]{4,8}$/.test(code)){
+        msg.textContent = '⚠️ 房间号格式不对（4-8 位字母数字）';
+        msg.style.color = '#f66'; return;
+      }
+      msg.textContent = '⏳ 正在连接 ' + code + ' …';
+      msg.style.color = '#ff0';
+      try{
+        window.__mp.init({ room:'mc-'+code, name:'玩家' });
+        msg.textContent = '✅ 已加入 ' + code + '，正在进入游戏…';
+        msg.style.color = '#6f6';
+        // 自动开始游戏（若有存档先载入，否则新建）
+        setTimeout(()=>{
+          try{
+            if(typeof startGame === 'function') startGame();
+          }catch(e){}
+        }, 600);
+      }catch(e){
+        msg.textContent = '⚠️ 加入失败：' + e.message;
+        msg.style.color = '#f66';
+      }
+    };
+    $('mpJoinGo2').onclick = doJoin;
+    $('mpJoinInput2').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') doJoin(); });
+  }
   function bind(){
     const $ = (id)=>document.getElementById(id);
     const cfg = window.__mpCfg || {};
@@ -1115,7 +1173,7 @@ window.__mpUI = (function(){
     if(g){ g.textContent = t; g.style.color = c || '#aaa'; }
   }
 
-  function init(){ try{ buildMenuBlock(); }catch(e){} }
+  function init(){ try{ buildMenuBlock(); buildJoinMenu(); }catch(e){} }
   // 页面加载后自动构建（主菜单常驻）
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', ()=>{ setTimeout(init, 300); });
