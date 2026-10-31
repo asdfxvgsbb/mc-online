@@ -495,6 +495,8 @@
       <button id="randSeedBtn" style="margin-top:6px;width:100%">🎲 随机 64 位种子</button>
     </div>
 
+    <!-- 🌐 联机（由 __mpUI 动态填充） -->
+    <div id="mpMenuBox" style="margin-top:12px;text-align:left"></div>
     <!-- 存档列表 -->
     <div id="saveListBox" style="margin-top:12px;text-align:left">
       <p><b class="hl">📂 我的存档</b></p>
@@ -919,63 +921,133 @@ window.__mp = (function(){
            get myId(){ return myId; }, get myName(){ return myName; } };
 })();
 
-/* 🌐 联机配置 UI（右下角按钮 + 弹窗） */
+/* 🌐 联机 UI v2：主菜单入口 + 创建联机（邀请码）/ 输入房间号加入 */
 window.__mpUI = (function(){
   let built = false;
-  function build(){
-    if(built) return; built = true;
-    const btn = document.createElement('div');
-    btn.id = 'mpBtn';
-    btn.textContent = '🌐';
-    btn.style.cssText = 'position:fixed;right:8px;bottom:120px;z-index:9998;'+
-      'width:40px;height:40px;border-radius:50%;background:rgba(30,120,220,.85);'+
-      'color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;'+
-      'user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4)';
-    btn.onclick = open;
-    document.body.appendChild(btn);
+
+  function el(tag, css, txt){
+    const d = document.createElement(tag);
+    if(css) d.style.cssText = css;
+    if(txt !== undefined) d.textContent = txt;
+    return d;
   }
-  function open(){
-    let p = document.getElementById('mpPanel');
-    if(p){ p.style.display = 'flex'; return; }
-    p = document.createElement('div');
-    p.id = 'mpPanel';
-    p.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.75);'+
-      'display:flex;align-items:center;justify-content:center;font:14px sans-serif;color:#fff';
-    p.innerHTML = `
-      <div style="background:#1e2430;padding:18px;border-radius:12px;width:280px;max-width:88vw">
-        <div style="font-size:16px;font-weight:bold;margin-bottom:12px">🌐 联机设置</div>
-        <div style="margin-bottom:10px">
-          <div style="font-size:12px;opacity:.7;margin-bottom:4px">你的昵称</div>
-          <input id="mpName" maxlength="10" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#0f141c;color:#fff" value="玩家">
-        </div>
-        <div style="margin-bottom:14px">
-          <div style="font-size:12px;opacity:.7;margin-bottom:4px">房间号（朋友填同一个）</div>
-          <input id="mpRoom" maxlength="20" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#0f141c;color:#fff" value="room1">
-        </div>
-        <div style="display:flex;gap:8px">
-          <button id="mpJoin" style="flex:1;padding:10px;border-radius:6px;border:0;background:#1e78dc;color:#fff;font-size:14px">加入</button>
-          <button id="mpClose" style="flex:1;padding:10px;border-radius:6px;border:0;background:#444;color:#fff;font-size:14px">关闭</button>
-        </div>
-        <div id="mpMsg" style="margin-top:10px;font-size:12px;opacity:.8;min-height:16px"></div>
-      </div>`;
-    document.body.appendChild(p);
-    document.getElementById('mpClose').onclick = ()=>{ p.style.display='none'; };
-    document.getElementById('mpJoin').onclick = ()=>{
-      const nm = (document.getElementById('mpName').value || '玩家').trim();
-      const rm = (document.getElementById('mpRoom').value || 'room1').trim();
-      const msg = document.getElementById('mpMsg');
-      if(!window.__mpCfg || !window.__mpCfg.url){
-        msg.textContent = '⚠️ 未配置 Supabase，当前为单机';
-        msg.style.color = '#ffb454';
-        return;
+
+  /* 生成 6 位邀请码（大写字母+数字，去掉易混淆字符） */
+  function genCode(){
+    const CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for(let i=0;i<6;i++) s += CH[Math.floor(Math.random()*CH.length)];
+    return s;
+  }
+
+  /* ---------- 在主菜单注入「联机」区块 ---------- */
+  function buildMenuBlock(){
+    const box = document.getElementById('mpMenuBox');
+    if(!box) return;                        // 容器不存在（非主菜单环境）
+    if(box.dataset.built === '1') return;   // 已构建
+    box.dataset.built = '1';
+    box.style.cssText = 'margin-top:12px;text-align:left;border-top:2px solid #333;padding-top:12px';
+    box.innerHTML = `
+      <p><b class="hl">🌐 联机游戏</b></p>
+      <button id="mpCreateBtn" class="green" style="width:100%;margin-bottom:6px">➕ 创建联机房间</button>
+      <button id="mpJoinBtn2" style="width:100%;margin-bottom:6px">🔗 输入房间号加入</button>
+      <div id="mpCodeBox" style="display:none;margin-top:8px;padding:10px;background:#0f2410;border:2px solid #2e7d32;border-radius:6px;text-align:center">
+        <div style="font-size:12px;opacity:.8;margin-bottom:4px">房间号（发给朋友）</div>
+        <div id="mpCodeVal" style="font-size:24px;font-weight:bold;letter-spacing:4px;color:#7CFC00;margin:6px 0"></div>
+        <div id="mpCodeTip" style="font-size:11px;opacity:.7;margin-bottom:8px">等朋友加入中…</div>
+        <button id="mpCopyBtn" style="padding:6px 14px;font-size:12px">📋 复制房间号</button>
+        <button id="mpLeaveBtn" style="padding:6px 14px;font-size:12px;margin-left:6px">🚪 退出房间</button>
+      </div>
+      <div id="mpJoinBox" style="display:none;margin-top:8px;padding:10px;background:#101824;border:2px solid #1e78dc;border-radius:6px">
+        <div style="font-size:12px;opacity:.8;margin-bottom:4px">输入朋友给的房间号</div>
+        <input id="mpCodeInput" maxlength="8" placeholder="例如 A3K9Z2" style="width:100%;box-sizing:border-box;padding:8px;margin-bottom:6px;border-radius:6px;border:1px solid #444;background:#0a0e14;color:#fff;font-size:18px;text-align:center;letter-spacing:3px;text-transform:uppercase">
+        <button id="mpJoinGo" class="green" style="width:100%;margin-bottom:6px">✅ 加入</button>
+        <div id="mpJoinMsg" style="font-size:12px;min-height:16px"></div>
+      </div>
+      <div id="mpGlobalStatus" style="font-size:11px;opacity:.7;margin-top:6px;min-height:14px"></div>`;
+    bind();
+  }
+
+  function bind(){
+    const $ = (id)=>document.getElementById(id);
+    const cfg = window.__mpCfg || {};
+    const noCfg = ()=>{
+      if(!cfg.url || !cfg.key){
+        setGlobal('⚠️ 未配置 Supabase，联机不可用（需要填入 url/key）', '#ffb454');
+        return true;
       }
-      const ok = window.__mp.init({ url:window.__mpCfg.url, key:window.__mpCfg.key, room:'mc-'+rm, name:nm });
-      msg.textContent = ok ? ('✅ 正在连接 mc-'+rm) : '⚠️ 连接失败';
+      return false;
+    };
+
+    if($('mpCreateBtn')) $('mpCreateBtn').onclick = ()=>{
+      if(noCfg()) return;
+      const code = genCode();
+      const nm = (window.__mp && window.__mp.myName) || '房主';
+      const ok = window.__mp.init({ url:cfg.url, key:cfg.key, room:'mc-'+code, name:'房主' });
+      if(ok){
+        $('mpCodeBox').style.display = 'block';
+        $('mpJoinBox').style.display = 'none';
+        $('mpCodeVal').textContent = code;
+        $('mpCodeTip').textContent = '等朋友加入中…（最多 5 人）';
+        setGlobal('✅ 房间已创建：' + code, '#6f6');
+      } else {
+        setGlobal('⚠️ 创建失败，请检查网络', '#f66');
+      }
+    };
+
+    if($('mpJoinBtn2')) $('mpJoinBtn2').onclick = ()=>{
+      if(noCfg()) return;
+      $('mpJoinBox').style.display = 'block';
+      $('mpCodeBox').style.display = 'none';
+    };
+
+    if($('mpCopyBtn')) $('mpCopyBtn').onclick = ()=>{
+      const v = $('mpCodeVal').textContent || '';
+      try{
+        navigator.clipboard.writeText(v);
+        setGlobal('📋 已复制房间号：' + v, '#6f6');
+      }catch(e){
+        const ta = document.createElement('textarea');
+        ta.value = v; document.body.appendChild(ta); ta.select();
+        try{ document.execCommand('copy'); setGlobal('📋 已复制：' + v, '#6f6'); }catch(e2){ setGlobal('房间号：' + v, '#fff'); }
+        document.body.removeChild(ta);
+      }
+    };
+
+    if($('mpLeaveBtn')) $('mpLeaveBtn').onclick = ()=>{
+      try{ window.__mp.leave(); }catch(e){}
+      $('mpCodeBox').style.display = 'none';
+      setGlobal('🚪 已退出房间', '#aaa');
+    };
+
+    if($('mpJoinGo')) $('mpJoinGo').onclick = ()=>{
+      if(noCfg()) return;
+      const code = ($('mpCodeInput').value || '').trim().toUpperCase();
+      const msg = $('mpJoinMsg');
+      if(!/^[A-Z0-9]{4,8}$/.test(code)){
+        msg.textContent = '⚠️ 房间号格式不对（4-8 位字母数字）';
+        msg.style.color = '#f66'; return;
+      }
+      const ok = window.__mp.init({ url:cfg.url, key:cfg.key, room:'mc-'+code, name:'玩家' });
+      msg.textContent = ok ? ('✅ 正在加入 ' + code) : '⚠️ 加入失败';
       msg.style.color = ok ? '#6f6' : '#f66';
+      if(ok) setGlobal('✅ 正在加入房间 ' + code, '#6f6');
     };
   }
-  function init(){ try{ build(); }catch(e){} }
-  return { init, open };
+
+  function setGlobal(t, c){
+    const g = document.getElementById('mpGlobalStatus');
+    if(g){ g.textContent = t; g.style.color = c || '#aaa'; }
+  }
+
+  function init(){ try{ buildMenuBlock(); }catch(e){} }
+  // 页面加载后自动构建（主菜单常驻）
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', ()=>{ setTimeout(init, 300); });
+  } else {
+    setTimeout(init, 300);
+  }
+  return { init };
 })();
 
 
@@ -6360,8 +6432,9 @@ function genChunkTerrain(cx, cz, bioMap){
          if(bi){ biomeOreBias = (Number(bi.temp||0.5) - 0.5) * 0.04 - (Number(bi.rain||0.5) * 0.02); }
        }catch(e){}
       for(let y=0;y<=h;y++){
-        // 🪨 基岩层：y=0 全实心，y=1 一半概率（MC 风格凹凸底面），不可破坏
-        if(y === 0 || (y === 1 && h >= 3 && px_hash(x,z,9999) < 0.5)){ setBlock(x,y,z,BT.BEDROCK,ckc); continue; }
+        // 🪨 基岩层：y=0 全实心（世界底），y=1 只有 25% 概率（MC 风格凹凸底面）
+        if(y === 0){ setBlock(x,y,z,BT.BEDROCK,ckc); continue; }
+        if(y === 1 && px_hash(x,z,9999) < 0.25){ setBlock(x,y,z,BT.BEDROCK,ckc); continue; }
         // 🌋 深层岩浆池：y 2~6 的洞穴空腔里低概率灌岩浆（只在洞穴内，不破坏地表）
         if(y>=2 && y<=6 && y<h-3 && px_hash(x,y,z,7777) < 0.10 && isCave(x,y,z,h)){
           setBlock(x,y,z,BT.LAVA_BLOCK,ckc); continue;
@@ -9375,6 +9448,9 @@ function loadGameById(id){
     villageLights.forEach(l=>scene.remove(l)); villageLights=[];
     if(portal && portal.mesh){ scene.remove(portal.mesh); portal = null; }
 
+    // ⚠️ 关键：先把 player.pos 移到存档出生点，否则 generateWorld 会按「上一个世界」的坐标生成地形
+    player.pos.set(spawnX + 0.5, (typeof heightAt === 'function' ? heightAt(spawnX, spawnZ) : 10) + 2, spawnZ + 0.5);
+    player.vel.set(0,0,0);
     // 以玩家存档位置为中心，按种子重新生成地形（村庄/树/宝箱随之确定性重建）
     generateWorld();
     spawnChests();               // 补野外宝箱（村庄宝箱由 genChunk 生成）
@@ -9521,8 +9597,6 @@ function startGame(){
     toast('🌲 从砍树开始，一路发展到钻石吧！', 2600);
     updateQuest();
     if(typeof startAutoSave === 'function') startAutoSave();
-    // 🌐 联机 UI 初始化（失败静默，不影响单机）
-    try{ if(window.__mpUI) window.__mpUI.init(); }catch(e){}
   }
 }
 function restart(){
@@ -11919,6 +11993,33 @@ if(!collides(nx, player.pos.y, player.pos.z)) player.pos.x = nx;
     player.vel.set(0,0,0);
     damage(20, '掉入虚空');
   }
+  // 🆘 卡在方块里救援：身体被实心方块卡住（如基岩/岩浆层）→ 自动弹到地面上方
+  //    只检查「头部/腰部」位置，避免站在方块上时误触发
+  (function rescueIfStuck(){
+    if(flying) return;
+    const px = Math.floor(player.pos.x), py = Math.floor(player.pos.y), pz = Math.floor(player.pos.z);
+    const waist = blockAt(px, py, pz);                       // 腰部
+    const head  = blockAt(px, Math.floor(player.pos.y + 1.4), pz);  // 头部
+    const isSolid = (b)=> b && b.t !== BT.WATER && b.t !== BT.LAVA_BLOCK &&
+                          b.t !== BT.TALLGRASS && b.t !== BT.FLOWER &&
+                          b.t !== BT.SUGAR_CANE && b.t !== BT.CROP;
+    if(isSolid(waist) || isSolid(head)){
+      _stuckT = (_stuckT || 0) + dt;
+      if(_stuckT > 0.6){                                     // 卡住 0.6 秒才救，避免瞬穿误判
+        // 从当前位置往上找第一个空位
+        let ty = py;
+        for(let i=0;i<50;i++){
+          if(!isSolid(blockAt(px, ty+1, pz)) && !isSolid(blockAt(px, ty+2, pz))){ ty = ty+1; break; }
+          ty++;
+        }
+        player.pos.y = ty + 0.05;
+        player.vel.set(0,0,0);
+        player.onGround = false;
+        _stuckT = 0;
+        toast('🆘 检测到卡在方块中，已救出');
+      }
+    } else { _stuckT = 0; }
+  })();
   // 🛡️ 悬空卡死检测（仅救真虚空，不救普通方块边缘）：
   //    只在“下方连续无方块且已经掉得较低”时计时，避免跳边被托一下
   if(_jumpLandedGuard > 0) _jumpLandedGuard = Math.max(_jumpLandedGuard - dt, 0);
