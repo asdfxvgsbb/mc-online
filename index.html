@@ -9003,6 +9003,7 @@ let atkSwing = 0;          // 攻击挥动手臂动画
 let hitFlash = 0;          // 命中闪光
 let attackCooldown = 0;    // 攻击冷却剩余秒
 let digCooldown = 0;       // 挖掘冷却剩余秒
+let _lavaBurnT = 0;        // 🌋 岩浆灼烧累计计时（秒），必须声明，否则严格模式每帧抛 ReferenceError
 /* ⛏️ 长按挖掘系统参数 */
 // 每类方块的“基础挖掘时间”（秒，空手/对应工具下的基准）
 const BLOCK_DIG_TIME = {};
@@ -15785,6 +15786,7 @@ function extExtendedModuleTickV79(){
     let r = Math.random() * Math.max(1,wsum);
     for(const k of pool){ const w = ENCHANT_TABLE[k] ? (ENCHANT_TABLE[k].weight||1) : 1; r -= w; if(r<=0) return k; }
     return pool[0] || 'sharpness';
+  }
   // ⚔️ 批次3：真实附魔系统
   // window.__enchants = { 物品id或工具id: { 附魔key: 等级 } }
   if(!window.__enchants) window.__enchants = {};
@@ -15894,7 +15896,6 @@ function extExtendedModuleTickV79(){
   if(!window.__structures.features) window.__structures.features = {};
   window.__structures.features.currentEnchantLevel = currentEnchantLevel;
   window.__structures.features.currentEnchantSummary = currentEnchantSummary;
-  }
 
   const TRADER_SKINS = [
     { key:'farmer', skin:0 }, { key:'librarian', skin:1 }, { key:'blacksmith', skin:2 },
