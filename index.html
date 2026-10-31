@@ -12281,6 +12281,10 @@ function updatePlayer(dt){
     if(jumpHeld || keys['Space']){
       if(player.onGround){ player.vel.y = JUMP_SPEED; player.onGround = false; _airTimer = 0; _jumpLandedGuard = 0.35; }
     }
+    // ⚠️ 终端速度：支撑面采样只往下探 2 格（baseY-2 ~ baseY+1），
+    //    若单帧位移 |vel.y*dt| > 2，高速下落会直接穿过薄地面掉进地下。
+    //    dt 上限 0.05，故 vel.y 必须 >= -36 才能保证位移 <= 1.8 格。
+    if(player.vel.y < -32) player.vel.y = -32;
     player.pos.y += player.vel.y*dt;
   }
 
