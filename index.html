@@ -1378,6 +1378,29 @@ window.__mpUI = (function(){
 })();
 
 
+/* ♻️ 全局资源释放：从场景移除并释放 GPU 资源（geometry / material / map）
+   注意：联机模块 __mp 内部也有同名局部函数，主 IIFE 里的 40+ 处调用
+   必须依赖这个全局版本，否则会抛 ReferenceError 导致整个初始化中断。 */
+function disposeObj(obj){
+  if(!obj) return;
+  try{
+    if(obj.parent) obj.parent.remove(obj);
+    obj.traverse(o=>{
+      if(o.geometry && typeof o.geometry.dispose === 'function') o.geometry.dispose();
+      const m = o.material;
+      if(m){
+        const arr = Array.isArray(m) ? m : [m];
+        arr.forEach(mm=>{
+          if(!mm) return;
+          if(mm.map && typeof mm.map.dispose === 'function') mm.map.dispose();
+          if(typeof mm.dispose === 'function') mm.dispose();
+        });
+      }
+    });
+  }catch(e){}
+}
+try{ window.disposeObj = disposeObj; }catch(e){}
+
 (function(){
 "use strict";
 
