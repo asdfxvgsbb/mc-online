@@ -1129,15 +1129,25 @@ window.__mp = (function(){
         p.obj.position.y += (p.ty - p.obj.position.y) * k;
         p.obj.position.z += (p.tz - p.obj.position.z) * k;
         p.obj.rotation.y = p.tyaw;
-        // 🪂 贴地校正：若对方所在区块我这边还没加载，地面高度未知会显示悬空
-        // 只在两者水平距离很近（<24）且地面高度已可用时校正，避免远处乱跳
+        // 🧱 远端玩家必须「站在自己那边真实的地形上」：
+        //   ① 先确保他周围区块已生成（否则地形是空的 → 看起来穿墙/悬空）
+        //   ② 再用 solid 索引查真实地面高度，把他贴上去
+        //   这两步缺一不可：只贴地不加载区块 → 查不到地面仍会悬空
         try{
-          const dx = p.obj.position.x - (window.__getPlayer ? window.__getPlayer().pos.x : 0);
-          const dz = p.obj.position.z - (window.__getPlayer ? window.__getPlayer().pos.z : 0);
-          if(dx*dx + dz*dz < 576 && typeof window.__groundYAt === 'function'){
+          if(!p._chunkAt || performance.now() - p._chunkAt > 1500){
+            p._chunkAt = performance.now();
+            if(typeof window.__ensureChunksAt === 'function'){
+              window.__ensureChunksAt(p.obj.position.x, p.obj.position.z);
+            }
+          }
+          if(typeof window.__groundYAt === 'function'){
             const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z);
-            if(gy !== null && gy !== undefined && Math.abs(p.obj.position.y - gy) > 0.6){
-              p.obj.position.y += (gy - p.obj.position.y) * Math.min(1, dt*6);
+            if(gy !== null && gy !== undefined){
+              // 地面已可用 → 平滑贴到地面（不再限制距离，远近都贴）
+              const diff = gy - p.obj.position.y;
+              if(Math.abs(diff) > 0.05){
+                p.obj.position.y += diff * Math.min(1, dt*8);
+              }
             }
           }
         }catch(e){}
@@ -12218,7 +12228,6 @@ function updatePlayer(dt){
   const vz = (forward.z*mz + right.z*mx) * speed;
 
   // 先做垂直积分/落地/顶头，再做水平滑动，避免跳上方块棱边被夹一下
-  const prevY = player.pos.y;      // 🪂 本帧积分前的脚底高度（防穿透扫描起点）
   if(flying){
     if(jumpHeld || keys['Space']) player.vel.y = MOVE_SPEED;
     else if(sneakHeld || keys['ShiftLeft'] || keys['ShiftRight']) player.vel.y = -MOVE_SPEED;
@@ -12235,65 +12244,29 @@ function updatePlayer(dt){
   // 垂直阶段结束后：按「脚底足迹」9 点采样找支撑面，避免站在方块边缘掉下去
   if(!flying){
     ensureChunksAround(Math.floor(player.pos.x), Math.floor(player.pos.z));
-    // 🧱 第一优先级：身体是否嵌进了实心方块（被传送进山体 / 被方块包围）
-    //    这种情况必须立刻向上顶到空位，否则任何下落逻辑都只会让他一路穿下去
-    {
-      const bxc = Math.floor(player.pos.x), bzc = Math.floor(player.pos.z);
-      const solidAt = (x,y,z)=>{
-        const bb = blockAt(x, y, z);
-        return !!(bb && bb.t !== BT.WATER && NO_COLLIDE_TYPES.indexOf(bb.t) < 0);
-      };
-      const bodyFree = (fy)=>{
-        for(let t = fy; t <= fy + 1; t++) if(solidAt(bxc, t, bzc)) return false;
-        return true;
-      };
-      let fy0 = Math.floor(player.pos.y);
-      if(!bodyFree(fy0)){
-        for(let fy = fy0 + 1; fy <= fy0 + 24; fy++){
-          if(bodyFree(fy)){
-            player.pos.y = fy;
-            player.vel.y = 0;
-            player.onGround = true;
-            break;
-          }
-        }
-      }
-    }
     // 🦶 支撑面采样：中心 + 四边 + 四角（半径略小于碰撞半径 0.3，避免蹭到邻格）
     const SR = 0.29;
-    // 🔑 扫描起点用「本帧积分前的高度 prevY」而不是当前高度：
-    //    这样本帧下落的整段路径都在扫描范围内，不会因一帧跨越数格而漏判
-    const scanFrom = Math.max(prevY, player.pos.y);
-    // 🧱 若玩家身体已嵌进实心方块（例如被传送到山体内部），
-    //    必须从「头顶高度」开始向下扫描，才能找到身上那层方块并顶出来
-    const bodyTopY = Math.floor(player.pos.y + 1.6);
-    const baseY = Math.max(Math.floor(scanFrom - 0.08), bodyTopY);
+    const baseY = Math.floor(player.pos.y - 0.08);
     const sx0 = player.pos.x, sz0 = player.pos.z;
     const sampleX = [sx0, sx0-SR, sx0+SR, sx0-SR, sx0+SR];
     const sampleZ = [sz0, sz0-SR, sz0+SR, sz0+SR, sz0-SR];
     let supportTop = -Infinity;
-    // 搜索深度 = 本帧下落格数 + 3 格余量（上限 16），彻底杜绝高速穿地
-    const fallDist = Math.max(0, prevY - player.pos.y);
-    const scanDepth = Math.min(16, 3 + Math.ceil(fallDist));
     for(let i=0;i<sampleX.length;i++){
       const bx = Math.floor(sampleX[i]), bz = Math.floor(sampleZ[i]);
-      for(let dy=1; dy>=-scanDepth; dy--){
+      for(let dy=1; dy>=-2; dy--){
         const b = blockAt(bx, baseY+dy, bz);
         if(b && b.t !== BT.WATER){
           const top = baseY + dy + 1;
           // 只认“顶面不高于脚底太多”的方块（脚所在那一格是障碍物，跳过继续往下找）
-          if(top <= scanFrom + 0.12){ if(top > supportTop) supportTop = top; break; }
+          if(top <= player.pos.y + 0.12){ if(top > supportTop) supportTop = top; break; }
         }
       }
     }
     if(player.vel.y <= 0){
       if(supportTop > -Infinity){
         const gap = player.pos.y - supportTop;
-        // 🪂 防穿透判定：
-        //   ① gap 在 [−0.9, 0.12] → 贴面/轻微穿透，直接站上去
-        //   ② 本帧起点 prevY 高于支撑面、终点低于支撑面 → 本帧穿过了它，必须停下
-        const swept = (prevY >= supportTop - 0.001) && (player.pos.y < supportTop);
-        if((gap <= 0.12 && gap > -0.9) || swept){
+        if(gap <= 0.12 && gap > -0.9){
+          // 贴面或轻微穿透 → 站上去（含 1 格台阶）
           player.pos.y = supportTop;
           player.vel.y = 0;
           player.onGround = true;
@@ -12889,6 +12862,16 @@ window.__groundYAt = function(wx, wz){
     }
     return null;
   }catch(e){ return null; }
+};
+// —— 供联机模块强制加载某处区块（远端玩家周围必须有地形，否则看起来悬空/穿墙） ——
+window.__ensureChunksAt = function(wx, wz){
+  try{
+    if(typeof ensureChunksAround === 'function'){
+      ensureChunksAround(Math.floor(wx), Math.floor(wz));
+      return true;
+    }
+  }catch(e){}
+  return false;
 };
 // —— 采用远端世界（种子 + 出生点），重新生成地形 ——
 window.__adoptWorld = function(seed, spx, spz, sx, sz){
