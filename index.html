@@ -7168,7 +7168,14 @@ function unloadFarChunks(px, pz){
 // 初始化世界（替代旧 generateWorld）
 function generateWorld(){
   blocks.clear(); solid.clear();
-  for(const k in instMeshes){ disposeObj(instMeshes[k].mesh); }
+  // ⚠️ 这里只能 remove，不能 dispose！
+  //    instMeshes 的 geometry 来自全局共享的 sharedBox()/sharedCross()，
+  //    material 来自全局缓存 matCache（getMat）。
+  //    一旦 dispose，缓存里的对象就被销毁，重建后整个世界方块全部无法渲染。
+  for(const k in instMeshes){
+    const _im = instMeshes[k] && instMeshes[k].mesh;
+    if(_im && _im.parent) _im.parent.remove(_im);
+  }
   instMeshes = {};
   loadedChunks.clear();
   chunkBlocks.clear();       // 重置按块索引
@@ -7859,7 +7866,14 @@ function isBlockVisible(x, y, z, t){
 }
 
 function rebuildAllInstances(){
-  for(const k in instMeshes){ disposeObj(instMeshes[k].mesh); }
+  // ⚠️ 这里只能 remove，不能 dispose！
+  //    instMeshes 的 geometry 来自全局共享的 sharedBox()/sharedCross()，
+  //    material 来自全局缓存 matCache（getMat）。
+  //    一旦 dispose，缓存里的对象就被销毁，重建后整个世界方块全部无法渲染。
+  for(const k in instMeshes){
+    const _im = instMeshes[k] && instMeshes[k].mesh;
+    if(_im && _im.parent) _im.parent.remove(_im);
+  }
   instMeshes = {}; slotIndex = {}; freeSlots = {};
   if(player && player.pos){ renderCenterCX = chunkOf(player.pos.x); renderCenterCZ = chunkOf(player.pos.z); }
 
