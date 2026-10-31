@@ -17448,7 +17448,7 @@ function extExtendedModuleTickV79(){
     delBlock(dragonEgg.x, dragonEgg.y, dragonEgg.z);
     setBlockForce(target.x, target.y, target.z, BT.DRAGON_EGG);
     dragonEgg = {x:target.x, y:target.y, z:target.z};
-    if(dragonEggMesh){ try{ scene.remove(dragonEggMesh); }catch(e){} dragonEggMesh = null; addEggMesh(); }
+    if(dragonEggMesh){ try{ disposeObj(dragonEggMesh); }catch(e){} dragonEggMesh = null; } addEggMesh();
     S.dig();
     toast("✨ 龙蛋传送到了别处！");
     return true;
