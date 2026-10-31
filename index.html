@@ -12218,6 +12218,7 @@ function updatePlayer(dt){
   const vz = (forward.z*mz + right.z*mx) * speed;
 
   // 先做垂直积分/落地/顶头，再做水平滑动，避免跳上方块棱边被夹一下
+  const prevY = player.pos.y;      // 🪂 本帧积分前的脚底高度（防穿透扫描起点）
   if(flying){
     if(jumpHeld || keys['Space']) player.vel.y = MOVE_SPEED;
     else if(sneakHeld || keys['ShiftLeft'] || keys['ShiftRight']) player.vel.y = -MOVE_SPEED;
@@ -12236,27 +12237,39 @@ function updatePlayer(dt){
     ensureChunksAround(Math.floor(player.pos.x), Math.floor(player.pos.z));
     // 🦶 支撑面采样：中心 + 四边 + 四角（半径略小于碰撞半径 0.3，避免蹭到邻格）
     const SR = 0.29;
-    const baseY = Math.floor(player.pos.y - 0.08);
+    // 🔑 扫描起点用「本帧积分前的高度 prevY」而不是当前高度：
+    //    这样本帧下落的整段路径都在扫描范围内，不会因一帧跨越数格而漏判
+    const scanFrom = Math.max(prevY, player.pos.y);
+    // 🧱 若玩家身体已嵌进实心方块（例如被传送到山体内部），
+    //    必须从「头顶高度」开始向下扫描，才能找到身上那层方块并顶出来
+    const bodyTopY = Math.floor(player.pos.y + 1.6);
+    const baseY = Math.max(Math.floor(scanFrom - 0.08), bodyTopY);
     const sx0 = player.pos.x, sz0 = player.pos.z;
     const sampleX = [sx0, sx0-SR, sx0+SR, sx0-SR, sx0+SR];
     const sampleZ = [sz0, sz0-SR, sz0+SR, sz0+SR, sz0-SR];
     let supportTop = -Infinity;
+    // 搜索深度 = 本帧下落格数 + 3 格余量（上限 16），彻底杜绝高速穿地
+    const fallDist = Math.max(0, prevY - player.pos.y);
+    const scanDepth = Math.min(16, 3 + Math.ceil(fallDist));
     for(let i=0;i<sampleX.length;i++){
       const bx = Math.floor(sampleX[i]), bz = Math.floor(sampleZ[i]);
-      for(let dy=1; dy>=-2; dy--){
+      for(let dy=1; dy>=-scanDepth; dy--){
         const b = blockAt(bx, baseY+dy, bz);
         if(b && b.t !== BT.WATER){
           const top = baseY + dy + 1;
           // 只认“顶面不高于脚底太多”的方块（脚所在那一格是障碍物，跳过继续往下找）
-          if(top <= player.pos.y + 0.12){ if(top > supportTop) supportTop = top; break; }
+          if(top <= scanFrom + 0.12){ if(top > supportTop) supportTop = top; break; }
         }
       }
     }
     if(player.vel.y <= 0){
       if(supportTop > -Infinity){
         const gap = player.pos.y - supportTop;
-        if(gap <= 0.12 && gap > -0.9){
-          // 贴面或轻微穿透 → 站上去（含 1 格台阶）
+        // 🪂 防穿透判定：
+        //   ① gap 在 [−0.9, 0.12] → 贴面/轻微穿透，直接站上去
+        //   ② 本帧起点 prevY 高于支撑面、终点低于支撑面 → 本帧穿过了它，必须停下
+        const swept = (prevY >= supportTop - 0.001) && (player.pos.y < supportTop);
+        if((gap <= 0.12 && gap > -0.9) || swept){
           player.pos.y = supportTop;
           player.vel.y = 0;
           player.onGround = true;
@@ -12265,7 +12278,31 @@ function updatePlayer(dt){
           player.onGround = false;
         }
       } else {
-        player.onGround = false;
+        // 🧱 关键修复：找不到支撑面 → 说明身体嵌在实心方块内部
+        //    不能放任自由下落（会一路穿过整座山），必须向上顶到最近的空位
+        let pushed = false;
+        const bxc = Math.floor(player.pos.x), bzc = Math.floor(player.pos.z);
+        const bodyFree = (fy)=>{
+          for(let t = fy; t <= fy + 1; t++){       // 身体占 2 格（脚 + 头）
+            const bb = blockAt(bxc, t, bzc);
+            if(bb && bb.t !== BT.WATER && NO_COLLIDE_TYPES.indexOf(bb.t) < 0) return false;
+          }
+          return true;
+        };
+        let fy0 = Math.floor(player.pos.y);
+        if(!bodyFree(fy0)){
+          // 向上找第一个身体能站住的空位（最多 24 格，足够顶出任何山体）
+          for(let fy = fy0 + 1; fy <= fy0 + 24; fy++){
+            if(bodyFree(fy)){
+              player.pos.y = fy;
+              player.vel.y = 0;
+              player.onGround = true;
+              pushed = true;
+              break;
+            }
+          }
+        }
+        if(!pushed) player.onGround = false;
       }
     }
   }
