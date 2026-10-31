@@ -9770,7 +9770,6 @@ function hasSave(){ return listSaves().length > 0; }
 function saveGame(){
   try{
     if(!curSaveId){ curSaveId = 'w' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); }
-    if(typeof syncExtendedToSave === 'function') syncExtendedToSave({});
     // 🌱 地形由种子确定性生成，只需保存"玩家改动"的方块（体积极小）
     const edits = [];
     playerEdits.forEach((v,k)=>edits.push([k, v.t||0, v.del?1:0]));
@@ -9794,6 +9793,10 @@ function saveGame(){
         portal.origin] : null,
       enchants: window.__enchants || {}   // ⚔️ 批次3：附魔持久化
     };
+    // ⚠️ 原来写的是 syncExtendedToSave({})，传的是临时空对象，
+    //    扩展统计/扩展成就被写进去后立刻丢弃，导致读档后这些数据全部丢失。
+    //    必须传真正的 data 对象。
+    if(typeof syncExtendedToSave === 'function') syncExtendedToSave(data);
     data.difficulty = DIFFICULTY ? DIFFICULTY.icon : '⚖️';   // ⚙️ 批次8：难度持久化（按图标还原）
     localStorage.setItem(SAVE_PREFIX+curSaveId, JSON.stringify(data));
     // 更新列表
