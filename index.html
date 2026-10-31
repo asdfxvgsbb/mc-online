@@ -377,6 +377,7 @@ function __showErr(msg){
   var b = document.getElementById('__errBox');
   if(b){ b.style.display='block'; b.textContent = window.__errs.slice(-5).join('\n---\n'); }
 }
+window.__showErr = __showErr;
 window.addEventListener('error', function(e){
   __showErr('[ERROR] ' + (e.message||'') + ' @' + (e.filename||'').split('/').pop() + ':' + e.lineno);
 });
@@ -978,7 +979,7 @@ window.__mp = (function(){
         if(_p && _p.pos){
           publish({ id:myId, name:myName,
                     x:+_p.pos.x.toFixed(2), y:+_p.pos.y.toFixed(2), z:+_p.pos.z.toFixed(2),
-                    yaw:+(window.yaw||0).toFixed(2) });
+                    yaw:+(((window.__getYaw && window.__getYaw()) || 0)).toFixed(2) });
         }
       }catch(e){}
     }
@@ -1083,12 +1084,13 @@ window.__mpUI = (function(){
         window.__mp.init({ room:'mc-'+code, name:'玩家' });
         msg.textContent = '✅ 已加入 ' + code + '，正在进入游戏…';
         msg.style.color = '#6f6';
-        // 自动开始游戏（若有存档先载入，否则新建）
+        // 自动进入游戏（startGame 在主 IIFE 内，必须走 window.__startGame 桥）
         setTimeout(()=>{
           try{
-            if(typeof startGame === 'function') startGame();
-          }catch(e){}
-        }, 600);
+            if(typeof window.__startGame === 'function') window.__startGame();
+            else __showErr('[MP] __startGame 桥未就绪');
+          }catch(e){ __showErr('[MP] startGame: ' + e.message); }
+        }, 700);
       }catch(e){
         msg.textContent = '⚠️ 加入失败：' + e.message;
         msg.style.color = '#f66';
@@ -17411,7 +17413,17 @@ window.__t = {
 // 🌉 桥：把主 IIFE 内部 API 暴露给外部的盔甲 IIFE
 
 window.__getPlayer = function(){ return player; };
-window.__getScene  = function(){ return scene; };   // 🌐 联机模块取场景
+window.__getScene  = function(){ return scene; };
+window.__startGame = function(){
+  try{
+    // 若还没进过世界（running=false 且没有任何方块），先自动建一个世界
+    if(!running && (!blocks || blocks.size === 0)){
+      try{ if(typeof newWorld === 'function') newWorld(String(Date.now()), '联机世界'); }catch(e){}
+    }
+    startGame();
+  }catch(e){ if(window.__showErr) __showErr('[__startGame] ' + e.message); }
+};
+window.__getYaw = function(){ return yaw; };   // 🌐 联机同步朝向
 window.giveItemG = giveItem;
 window.countItemG = countItem;
 window.consumeItemG = consumeItem;
