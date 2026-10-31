@@ -7905,7 +7905,11 @@ function rebuildAllInstances(){
 }
 function rebuildType(t){
   const old = instMeshes[t];
-  if(old) disposeObj(old.mesh);
+  // ⚠️ 只能 remove，不能 dispose！
+  //    new THREE.InstancedMesh(geoFor(t), getMat(t), ...) 里的 geometry/material
+  //    都是全局共享对象（sharedBox / sharedCross / matCache），
+  //    dispose 会把它们销毁，导致此后该类型方块全部无法渲染。
+  if(old && old.mesh && old.mesh.parent) old.mesh.parent.remove(old.mesh);
   const list = [];
   forEachBlockInRenderRange(b=>{
     if(b.t !== +t) return;
