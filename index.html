@@ -9875,7 +9875,13 @@ function loadGameById(id){
       bagSlots    = new Array(BAG_SIZE).fill(null);
       (d.hotbarSlots||[]).forEach((v,i)=>{ if(v && v[1]>0 && i<HOTBAR_SIZE) hotbarSlots[i]={id:v[0],n:Math.min(v[1],STACK_MAX)}; });
       (d.bagSlots||[]).forEach((v,i)=>{ if(v && v[1]>0 && i<BAG_SIZE) bagSlots[i]={id:v[0],n:Math.min(v[1],STACK_MAX)}; });
-      hotbarSelIdx = d.hotbarSelIdx|0;
+      // ⚠️ 必须夹紧：存档被改/旧版写入越界值时 hotbarSlots[idx] 为 undefined，
+      //    后续 20+ 处 hotbarSlots[hotbarSelIdx].id 会抛 TypeError，导致交互全部失效。
+      {
+        let _hs = d.hotbarSelIdx|0;
+        if(!(_hs >= 0 && _hs < HOTBAR_SIZE)) _hs = 0;
+        hotbarSelIdx = _hs;
+      }
       syncInv();
     } else {
       // 旧存档：把 inv 汇总拆回格子
