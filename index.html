@@ -13206,7 +13206,7 @@ addEventListener('load',()=>{
   // 📂 主菜单存档列表：必须在首次加载时就渲染一次，
   //    否则「📂 我的存档」区域是空白，玩家看不到任何存档、也就无法读档
   //    （原来只有「返回主菜单」和「删除存档」才会调用 renderSaveList）
-  step('saves', ()=>{ if(typeof renderSaveList === 'function') renderSaveList(); });
+  step('saves', ()=>{ if(typeof window.__renderSaveList === 'function') window.__renderSaveList(); });
   step('animate', ()=>{ animate(); });
 
   document.getElementById('startBtn2').onclick = ()=>{ restart(); };
@@ -13314,6 +13314,9 @@ addEventListener('load',()=>{
       box.appendChild(row);
     });
   }
+  // 🔑 必须挂到 window：主 IIFE 的 load 事件访问不到这个独立 IIFE 的局部函数，
+  //    否则首次进主菜单时存档列表一直是空白（看不到存档、无法读档）
+  try{ window.__renderSaveList = renderSaveList; }catch(e){}
 
   // ⚙️ 批次8：难度选择
   let curDiff = 'normal';
