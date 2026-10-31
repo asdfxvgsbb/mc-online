@@ -1008,8 +1008,13 @@ function getScene(){
       peers.set(d.id, p);
       setStatus('🌐 房间 ' + CFG.room + '：' + (peers.size+1) + '/' + CFG.maxPlayers + ' 人');
     } else {
-      p.tx = d.x; p.ty = d.y; p.tz = d.z;
-      p.tyaw = d.yaw || 0;
+      // ⚠️ 必须校验：远端某一帧上报 undefined/null 会让本地坐标变成 NaN，
+      //    之后 position += (NaN - x) * k 永远是 NaN，队友模型会永久消失。
+      const _nx = Number(d.x), _ny = Number(d.y), _nz = Number(d.z);
+      if(isFinite(_nx)) p.tx = _nx;
+      if(isFinite(_ny)) p.ty = _ny;
+      if(isFinite(_nz)) p.tz = _nz;
+      p.tyaw = isFinite(Number(d.yaw)) ? Number(d.yaw) : (p.tyaw || 0);
       p.lastSeen = performance.now();
     }
   }
@@ -1020,7 +1025,15 @@ function getScene(){
     try{
       p.obj.traverse(o=>{
         if(o.geometry) o.geometry.dispose();
-        if(o.material){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        const _m = o.material;
+        if(_m){
+          const _arr = Array.isArray(_m) ? _m : [_m];
+          for(const _mm of _arr){
+            if(!_mm) continue;
+            if(_mm.map) _mm.map.dispose();
+            if(_mm.dispose) _mm.dispose();
+          }
+        }
       });
     }catch(e){}
     peers.delete(id);
