@@ -495,8 +495,6 @@
       <button id="randSeedBtn" style="margin-top:6px;width:100%">🎲 随机 64 位种子</button>
     </div>
 
-    <!-- 🌐 联机（由 __mpUI 动态填充） -->
-    <div id="mpMenuBox" style="margin-top:12px;text-align:left"></div>
     <!-- 存档列表 -->
     <div id="saveListBox" style="margin-top:12px;text-align:left">
       <p><b class="hl">📂 我的存档</b></p>
@@ -526,6 +524,8 @@
     <button id="pauseAchBtn">🏆 查看成就</button>
     <button id="pauseRestartBtn">🔄 重开世界</button>
     <button id="pauseFpsBtn">📊 性能显示：关</button>
+    <!-- 🌐 联机（由 __mpUI 动态填充） -->
+    <div id="mpMenuBox" style="margin-top:12px;text-align:left"></div>
     <button id="pauseHomeBtn">🏠 返回主菜单</button>
     <p class="tip-line" style="margin-top:10px">💡 返回主菜单不会删除存档，可从开始界面重新载入</p>
   </div>
@@ -720,7 +720,7 @@ window.__mp = (function(){
   let myId = 'p' + Math.random().toString(36).slice(2, 8);
   let myName = '';
   let peers = new Map();   // id -> {obj, x,y,z, yaw, name, lastSeen}
-  let ready = false, joined = false;
+  let ready = false, joined = false, retryCount = 0;
   let lastSend = 0;
   let _statusEl = null;
 
@@ -792,11 +792,33 @@ window.__mp = (function(){
     try{
       client = supabase.createClient(CFG.url, CFG.key);
     }catch(e){
-      setStatus('⚠️ 连接失败');
+      setStatus('⚠️ 创建客户端失败');
       return false;
     }
-    joinChannel();
+    // 🔍 先探测服务器可达性，避免无谓的反复重连
+    setStatus('⏳ 正在连接服务器…');
+    probeServer().then(ok=>{
+      if(!ok){
+        setStatus('❌ 服务器无法访问（网络受限），联机不可用');
+        return;
+      }
+      setStatus('⏳ 服务器可达，正在进房间…');
+      joinChannel();
+    });
     return true;
+  }
+  /* 探测 Supabase 可达性：3 秒超时 */
+  function probeServer(){
+    return new Promise(resolve=>{
+      let done = false;
+      const finish = (v)=>{ if(!done){ done = true; resolve(v); } };
+      const timer = setTimeout(()=>finish(false), 3000);
+      try{
+        fetch(CFG.url + '/rest/v1/', { method:'HEAD', headers:{ apikey: CFG.key }, cache:'no-store' })
+          .then(r=>{ clearTimeout(timer); finish(true); })
+          .catch(e=>{ clearTimeout(timer); finish(false); });
+      }catch(e){ clearTimeout(timer); finish(false); }
+    });
   }
 
   function joinChannel(){
@@ -843,7 +865,11 @@ window.__mp = (function(){
           setStatus('🌐 已连接 ' + CFG.room);
         } else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
           ready = false;
-          setStatus('⚠️ 连接断开，重连中…');
+          retryCount++;
+          setStatus('⚠️ 连接失败（第' + retryCount + '次），检查网络…');
+        } else if(status === 'CLOSED'){
+          ready = false;
+          setStatus('⚠️ 连接已关闭');
         }
       });
     }catch(e){
