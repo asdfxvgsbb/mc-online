@@ -9665,9 +9665,12 @@ function listSaves(){
     const ids = raw ? JSON.parse(raw) : [];
     const out = [];
     for(const id of ids){
-      const s = localStorage.getItem(SAVE_PREFIX+id);
+      let s = null;
+      try{ s = localStorage.getItem(SAVE_PREFIX+id); }catch(e){ continue; }
       if(!s) continue;
-      const d = JSON.parse(s);
+      let d = null;
+      try{ d = JSON.parse(s); }catch(e){ continue; }   // 存档损坏不能拖垮整个列表
+      if(!d) continue;
       out.push({ id, seed: d.seed||'0', name: d.name||('世界 '+id),
         savedAt: d.savedAt||0, player:[d.player?d.player[0]:0, d.player?d.player[2]:0],
         edits: d.edits?d.edits.length:0, gemCount: d.gemCount||0 });
@@ -9958,8 +9961,8 @@ function restart(){
 }
 function toggleFly(){
   flying = !flying;
-  const b = document.getElementById('flyBtn');
-  if(b) b.textContent = flying ? '✈️ 飞行：开' : '✈️ 飞行：关';
+  // 🧹 flyBtn 这个按钮早已从 DOM 移除（13109 行也只拿到 null），
+  //    这里保留原逻辑无害但属死代码，直接去掉避免误导。
   const up = document.getElementById('btnUp'), dn = document.getElementById('btnDown');
   if(up) up.style.display = flying ? 'flex' : 'none';
   if(dn) dn.style.display = flying ? 'flex' : 'none';
@@ -11320,16 +11323,20 @@ function setupTouch(){
     // 初始显示
     val.textContent = LOOK_SENS.toFixed(1) + '×';
     // 从 localStorage 读回上次设置
-    const saved = localStorage.getItem('LOOK_SENS');
-    if(saved){
-      LOOK_SENS = parseFloat(saved) || 1.0;
-      sl.value = LOOK_SENS;
-      val.textContent = LOOK_SENS.toFixed(1) + '×';
-    }
+    // 🔒 隐私模式 / 禁用存储时 localStorage 会抛 SecurityError，
+    //    裸调用会让整个初始化 IIFE 中断，后面的背包按钮等全部失效。
+    try{
+      const saved = localStorage.getItem('LOOK_SENS');
+      if(saved){
+        LOOK_SENS = parseFloat(saved) || 1.0;
+        sl.value = LOOK_SENS;
+        val.textContent = LOOK_SENS.toFixed(1) + '×';
+      }
+    }catch(e){}
     sl.addEventListener('input', ()=>{
-      LOOK_SENS = parseFloat(sl.value);
+      LOOK_SENS = parseFloat(sl.value) || 1.0;
       val.textContent = LOOK_SENS.toFixed(1) + '×';
-      localStorage.setItem('LOOK_SENS', LOOK_SENS);
+      try{ localStorage.setItem('LOOK_SENS', LOOK_SENS); }catch(e){}
     });
   })();
   // 🎒 背包按钮
