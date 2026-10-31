@@ -9886,6 +9886,8 @@ function loadGameById(id){
       const sc = savedChests.find(s=>s[0]===c.x && s[1]===c.y && s[2]===c.z);
       if(sc) c.opened = !!sc[3];
     });
+    // 📥 还原扩展统计 / 扩展成就（否则读档后这些数据全部丢失）
+    if(typeof restoreExtendedFromSave === 'function') restoreExtendedFromSave(d);
     // 切存档时重置要塞定位，避免沿用上一个存档的随机盐
     if(window.__stronghold && window.__stronghold.reset) window.__stronghold.reset();
     if(d.portal){
@@ -11583,6 +11585,32 @@ function mergeExtendedStats(fromSave){
   if(typeof src.totalRecipeHints === 'number') EXTENDED_TRACK.totalRecipeHints += src.totalRecipeHints;
   if(typeof src.totalBestRecipeDist === 'number') EXTENDED_TRACK.totalBestRecipeDist += src.totalBestRecipeDist;
   if(typeof src.totalBestRecipeCount === 'number') EXTENDED_TRACK.totalBestRecipeCount += src.totalBestRecipeCount;
+}
+// 📥 读档还原：用「覆盖」语义，而不是累加。
+//    mergeExtendedStats 是累加语义，只适合「合并两份统计」；
+//    读档必须覆盖，否则反复读同一个档会让统计翻倍、成就提前解锁。
+function restoreExtendedFromSave(fromSave){
+  if(!fromSave || typeof fromSave !== 'object') return;
+  try{
+    const src = fromSave.extStats || {};
+    if(src.placedByType) EXTENDED_TRACK.placedByType = Object.assign({}, src.placedByType);
+    if(src.dugByType) EXTENDED_TRACK.dugByType = Object.assign({}, src.dugByType);
+    if(src.craftedById) EXTENDED_TRACK.craftedById = Object.assign({}, src.craftedById);
+    if(Array.isArray(src.chestsOpenedAt)) EXTENDED_TRACK.chestsOpenedAt = src.chestsOpenedAt.slice(-8);
+    if(typeof src.craftOpenedCount === 'number') EXTENDED_TRACK.craftOpenedCount = src.craftOpenedCount;
+    if(typeof src.totalCraftClicks === 'number') EXTENDED_TRACK.totalCraftClicks = src.totalCraftClicks;
+    if(typeof src.totalRecipeHints === 'number') EXTENDED_TRACK.totalRecipeHints = src.totalRecipeHints;
+    if(typeof src.totalBestRecipeDist === 'number') EXTENDED_TRACK.totalBestRecipeDist = src.totalBestRecipeDist;
+    if(typeof src.totalBestRecipeCount === 'number') EXTENDED_TRACK.totalBestRecipeCount = src.totalBestRecipeCount;
+    if(typeof src.lastFallDistance === 'number') EXTENDED_TRACK.lastFallDistance = src.lastFallDistance;
+    if(Array.isArray(src.fallSamples)) EXTENDED_TRACK.fallSamples = src.fallSamples.slice(-8);
+    if(Array.isArray(src.tipQueue)) EXTENDED_TRACK.tipQueue = src.tipQueue.slice(-3);
+    // 成就：先清空再按存档还原，避免上一个存档的成就残留
+    extAchDone = {};
+    if(fromSave.extAchDone && typeof fromSave.extAchDone === 'object'){
+      Object.keys(fromSave.extAchDone).forEach(k=>{ if(fromSave.extAchDone[k]) extAchDone[k] = true; });
+    }
+  }catch(e){}
 }
 function topExtendedPlaced(){
   const arr = Object.keys(EXTENDED_TRACK.placedByType).map(k=>[k, EXTENDED_TRACK.placedByType[k]|0]).sort((a,b)=>b[1]-a[1]);
