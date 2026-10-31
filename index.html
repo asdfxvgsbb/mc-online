@@ -849,7 +849,7 @@ window.__mp = (function(){
     const s = SERVERS[serverIdx % SERVERS.length];
     const url = 'wss://' + s.host + ':' + s.port + s.path;
     setStatus('⏳ 连接 ' + s.host + ' …');
-    const mySeq = connSeq;
+    const mySeq = connSeq;          // 🔑 本连接的序号
     let sock = null;
     try{
       sock = new WebSocket(url, 'mqtt');
@@ -865,13 +865,13 @@ window.__mp = (function(){
     }, 8000);
 
     sock.onopen = ()=>{
-      if(mySeq !== connSeq) return;
+      if(mySeq !== connSeq) return;    // 🔑 旧连接，忽略
       clearTimeout(timeout);
       setStatus('⏳ 握手…');
       try{ sock.send(pktConnect(myId)); }catch(e){}
     };
     sock.onmessage = (ev)=>{
-      if(mySeq !== connSeq) return;
+      if(mySeq !== connSeq) return;    // 🔑 旧连接，忽略
       const buf = new Uint8Array(ev.data);
       if(!buf.length) return;
       const type = buf[0] >> 4;
@@ -901,7 +901,11 @@ window.__mp = (function(){
             if(d && d.id && d.id !== myId){
               if(d.bye){ known.delete(d.id); removePeer(d.id); }
               else if(d.hello){ known.add(d.id); publish({ id:myId, name:myName, hi:1 }); onPeerHello(d); }
-              else if(d.hi){ known.add(d.id); onPeerHello(d); }
+              else if(d.hi){
+                known.add(d.id);
+                // 🔑 带种子的是世界信息 → 必须走世界同步；否则只当握手
+                if(d.seed !== undefined) onPeerSpawn(d); else onPeerHello(d);
+              }
               else if(d.sp){ onPeerSpawn(d); }
               else if(d.be){ onPeerBlockEdit(d.be); }
               else if(d.ch){ onPeerChest(d.ch); }
@@ -912,13 +916,11 @@ window.__mp = (function(){
         }
       }
     };
-    sock.onerror = ()=>{
-      if(mySeq !== connSeq) return;
+    ws.onerror = ()=>{
       clearTimeout(timeout);
       connecting = false;
     };
-    sock.onclose = ()=>{
-      if(mySeq !== connSeq) return;
+    ws.onclose = ()=>{
       clearTimeout(timeout);
       connecting = false;
       ready = false; joined = false;
@@ -1025,6 +1027,8 @@ window.__mp = (function(){
   function sendWorldInfo(){
     const wi = worldInfo();
     if(!wi) return;
+    // 🚫 世界还没准备好（出生点未定）就广播，会让队友被扔到错误位置
+    if(wi.spx === undefined || wi.spx === null || isNaN(wi.spx)) return;
     publish({ id:myId, name:myName, hi:1, host:(isHost?1:0),
               seed:wi.seed, spx:wi.spx, spz:wi.spz, sx:wi.sx, sz:wi.sz });
   }
@@ -1125,6 +1129,18 @@ window.__mp = (function(){
         p.obj.position.y += (p.ty - p.obj.position.y) * k;
         p.obj.position.z += (p.tz - p.obj.position.z) * k;
         p.obj.rotation.y = p.tyaw;
+        // 🪂 贴地校正：若对方所在区块我这边还没加载，地面高度未知会显示悬空
+        // 只在两者水平距离很近（<24）且地面高度已可用时校正，避免远处乱跳
+        try{
+          const dx = p.obj.position.x - (window.__getPlayer ? window.__getPlayer().pos.x : 0);
+          const dz = p.obj.position.z - (window.__getPlayer ? window.__getPlayer().pos.z : 0);
+          if(dx*dx + dz*dz < 576 && typeof window.__groundYAt === 'function'){
+            const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z);
+            if(gy !== null && gy !== undefined && Math.abs(p.obj.position.y - gy) > 0.6){
+              p.obj.position.y += (gy - p.obj.position.y) * Math.min(1, dt*6);
+            }
+          }
+        }catch(e){}
       }catch(e){}
       if(now - p.lastSeen > 8000) removePeer(id);
     });
@@ -1143,6 +1159,7 @@ window.__mp = (function(){
   function peerCount(){ return peers.size; }
   function isOnline(){ return ready && joined; }
   return { init, tick, leave, peerCount, isOnline, CFG,
+           rebroadcastWorld: function(){ try{ if(ready && joined) sendWorldInfo(); }catch(e){} },
            get myId(){ return myId; }, get myName(){ return myName; } };
 })();
 
@@ -7111,12 +7128,14 @@ function generateWorld(){
   //    （兼容旧存档残留 + 防止任何遗漏路径再次写入基岩）
   try{
     let n = 0;
-    for(const b of blocks){
+    for(const b of blocks.values()){          // Map 必须遍历 values()
       if(b.t === BT.BEDROCK){ b.t = BT.STONE; n++; }
     }
     if(n > 0){
       solid.clear();
-      for(const b of blocks) solid.add(K(b.x,b.y,b.z));
+      for(const b of blocks.values()){        // 🔑 solid 是 Map，用 set 不是 add
+        if(NO_COLLIDE_TYPES.indexOf(b.t) < 0) solid.set(K(b.x,b.y,b.z), true);
+      }
       rebuildAllInstances();
       console.log('[SANITIZE] 清除基岩方块:', n);
     }
@@ -12791,6 +12810,12 @@ window.__startGame = function(){
       try{ if(typeof newWorld === 'function') newWorld(String(Date.now()), '联机世界'); }catch(e){}
     }
     startGame();
+    // 🌐 世界此时才真正就绪（出生点已定）→ 重新广播世界信息给房间里的队友
+    try{
+      if(window.__mp && typeof window.__mp.rebroadcastWorld === 'function'){
+        setTimeout(()=>{ try{ window.__mp.rebroadcastWorld(); }catch(e){} }, 900);
+      }
+    }catch(e){}
   }catch(e){ if(window.__showErr) __showErr('[__startGame] ' + e.message); }
 };
 window.__getYaw = function(){ return yaw; };   // 🌐 联机同步朝向
@@ -12813,6 +12838,20 @@ window.__onPlayerUpdate = function(){ if(typeof updateArmorUI === 'function') up
 // —— 供联机模块读取当前世界信息 ——
 window.__getWorldInfo = function(){
   return { seed: String(WORLD_SEED), spx: spawnX, spz: spawnZ, sx: spawnX, sz: spawnZ };
+};
+// —— 供联机模块查询某水平位置的地面高度（远端玩家贴地用） ——
+// 返回该点向下扫描到的最上方实心方块的顶面 y；区块未加载时返回 null
+window.__groundYAt = function(wx, wz){
+  try{
+    const bx = Math.floor(wx), bz = Math.floor(wz);
+    // 区块必须已生成，否则数据不可信
+    const ck = chunkKey(chunkOf(bx), chunkOf(bz));
+    if(typeof chunkBlocks !== 'undefined' && chunkBlocks && !chunkBlocks.has(ck)) return null;
+    for(let y = 48; y >= 0; y--){
+      if(solid.has(K(bx, y, bz))) return y + 1;   // 方块顶面
+    }
+    return null;
+  }catch(e){ return null; }
 };
 // —— 采用远端世界（种子 + 出生点），重新生成地形 ——
 window.__adoptWorld = function(seed, spx, spz, sx, sz){
