@@ -7855,7 +7855,7 @@ function rebuildAllInstances(){
 }
 function rebuildType(t){
   const old = instMeshes[t];
-  if(old) scene.remove(old.mesh);
+  if(old) disposeObj(old.mesh);
   const list = [];
   forEachBlockInRenderRange(b=>{
     if(b.t !== +t) return;
@@ -8096,7 +8096,7 @@ function spawnChests(){
 function spawnPortal(){
   // 清理旧的传送门资源
   if(portal){
-    if(portal.mesh) scene.remove(portal.mesh);
+    if(portal.mesh) disposeObj(portal.mesh);
     if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>scene.remove(m));
   }
   // 🌀 末地传送门祭坛：默认不摆出来；必须先用末影之眼定位到随机要塞后，再重建到要塞
@@ -8707,7 +8707,7 @@ function spawnWither(x, y, z){
   updateWitherBar();
 }
 function removeWither(){
-  if(wither && wither.obj) scene.remove(wither.obj);
+  if(wither && wither.obj) disposeObj(wither.obj);
   wither = null;
   const bar = document.getElementById('witherBar');
   if(bar) bar.style.display = 'none';
@@ -9794,7 +9794,7 @@ function loadGameById(id){
     // 清理旧实体
     monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
     villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
-    villageLights.forEach(l=>scene.remove(l)); villageLights=[];
+    villageLights.forEach(l=>disposeObj(l)); villageLights=[];
     if(portal && portal.mesh){ disposeObj(portal.mesh); portal = null; }
 
     // ⚠️ 关键：先把 player.pos 移到存档出生点，否则 generateWorld 会按「上一个世界」的坐标生成地形
@@ -9832,8 +9832,8 @@ function loadGameById(id){
     // 切存档时重置要塞定位，避免沿用上一个存档的随机盐
     if(window.__stronghold && window.__stronghold.reset) window.__stronghold.reset();
     if(d.portal){
-      if(portal && portal.mesh) scene.remove(portal.mesh);
-      if(portal && portal.eyeMeshes) portal.eyeMeshes.forEach(m=>scene.remove(m));
+      if(portal && portal.mesh) disposeObj(portal.mesh);
+      if(portal && portal.eyeMeshes) portal.eyeMeshes.forEach(m=>disposeObj(m));
       spawnPortal();
       portal.x = d.portal[0]; portal.y = d.portal[1];
       portal.z = d.portal[2]; portal.active = d.portal[3];
@@ -9909,7 +9909,7 @@ function newWorld(seedStr, name){
 
   monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
-  villageLights.forEach(l=>scene.remove(l)); villageLights=[];
+  villageLights.forEach(l=>disposeObj(l)); villageLights=[];
   if(portal && portal.mesh){ scene.remove(portal.mesh); portal = null; }
   removeDragon(); inEnd = false; endPillars = [];
 
@@ -9966,7 +9966,7 @@ function restart(){
 
   monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
-  if(portal && portal.mesh) scene.remove(portal.mesh);
+  if(portal && portal.mesh) disposeObj(portal.mesh);
   removeDragon(); inEnd = false; endPillars = [];
   resetPlayer();          // 先定出生点
   lastChunkX = 1e9; lastChunkZ = 1e9; lastNearVillageCount = -1;
@@ -10092,7 +10092,7 @@ function doRespawn(mode){
     inEnd = false;
     endPillars = [];
     crystals = [];
-    if(endGateway && scene) scene.remove(endGateway);
+    if(endGateway && scene) disposeObj(endGateway);
     endGateway = null;
     dragonDefeated = false;
     // 恢复主世界天空
@@ -10105,7 +10105,7 @@ function doRespawn(mode){
     inNether = false;
     if(typeof portalCooldown !== 'undefined') portalCooldown = 4.0;
     if(typeof netherMonsters !== 'undefined' && netherMonsters.length){
-      netherMonsters.forEach(m=>{ if(m.obj) scene.remove(m.obj); });
+      netherMonsters.forEach(m=>{ if(m.obj) disposeObj(m.obj); });
       netherMonsters = [];
     }
     mode = 'home';
@@ -10929,7 +10929,7 @@ function attack(){
       S.kill(); wearTool(2);
       if(bc.hp <= 0){
         bc.alive = false;
-        scene.remove(bc.obj);
+        disposeObj(bc.obj);
         const i = crystals.indexOf(bc); if(i>=0) crystals.splice(i,1);
         toast('💥 摧毁了一颗末影水晶！');
       }
@@ -10959,7 +10959,7 @@ function attack(){
         wearTool(2);
         updateDragonBar();
         if(dragon.hp <= 0){
-          scene.remove(dragon.obj);
+          disposeObj(dragon.obj);
           dragon = null;
           kills++;
           addXP(120);
@@ -10992,7 +10992,7 @@ function attack(){
         wearTool(2);
         updateWitherBar();
         if(wither.hp <= 0){
-          scene.remove(wither.obj);
+          disposeObj(wither.obj);
           wither = null;
           kills++;
           addXP(200);
@@ -11058,7 +11058,7 @@ function attack(){
     __lootingBonus = window.__structures.features.currentEnchantLevel('looting') || 0;
   }
   if(best.hp <= 0){
-    scene.remove(best.obj);
+    disposeObj(best.obj);
     if(best._nether){
       // 🌋 下界怪物掉落
       const i = netherMonsters.indexOf(best); if(i>=0) netherMonsters.splice(i,1);
@@ -12478,10 +12478,10 @@ function spawnDragon(){
 }
 
 function removeDragon(){
-  if(dragon && dragon.obj) scene.remove(dragon.obj);
+  if(dragon && dragon.obj) disposeObj(dragon.obj);
   dragon = null;
   // 清理末影水晶
-  crystals.forEach(c=>{ if(c.obj) scene.remove(c.obj); });
+  crystals.forEach(c=>{ if(c.obj) disposeObj(c.obj); });
   crystals = [];
   const bar = document.getElementById('dragonBar');
   if(bar) bar.style.display = 'none';
@@ -12549,7 +12549,7 @@ function updateMonsters(dt){
   const isNight = (t < 0.22 || t > 0.78);
   // ⚙️ 批次8：和平模式不刷怪且清空场上怪物
   if(DIFFICULTY.spawnRate <= 0){
-    for(let i=monsters.length-1;i>=0;i--){ scene.remove(monsters[i].obj); monsters.splice(i,1); }
+    for(let i=monsters.length-1;i>=0;i--){ disposeObj(monsters[i].obj); monsters.splice(i,1); }
   } else {
     const maxM = DIFFICULTY.monsterMax || MONSTER_MAX;
     if(isNight && monsters.length < maxM){
@@ -17308,7 +17308,7 @@ function extExtendedModuleTickV79(){
     if(!sh) return;
     // 清理旧的传送门资源
     if(portal){
-      if(portal.mesh) scene.remove(portal.mesh);
+      if(portal.mesh) disposeObj(portal.mesh);
       if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>scene.remove(m));
       portal = null;
     }
