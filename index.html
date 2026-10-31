@@ -12235,6 +12235,30 @@ function updatePlayer(dt){
   // 垂直阶段结束后：按「脚底足迹」9 点采样找支撑面，避免站在方块边缘掉下去
   if(!flying){
     ensureChunksAround(Math.floor(player.pos.x), Math.floor(player.pos.z));
+    // 🧱 第一优先级：身体是否嵌进了实心方块（被传送进山体 / 被方块包围）
+    //    这种情况必须立刻向上顶到空位，否则任何下落逻辑都只会让他一路穿下去
+    {
+      const bxc = Math.floor(player.pos.x), bzc = Math.floor(player.pos.z);
+      const solidAt = (x,y,z)=>{
+        const bb = blockAt(x, y, z);
+        return !!(bb && bb.t !== BT.WATER && NO_COLLIDE_TYPES.indexOf(bb.t) < 0);
+      };
+      const bodyFree = (fy)=>{
+        for(let t = fy; t <= fy + 1; t++) if(solidAt(bxc, t, bzc)) return false;
+        return true;
+      };
+      let fy0 = Math.floor(player.pos.y);
+      if(!bodyFree(fy0)){
+        for(let fy = fy0 + 1; fy <= fy0 + 24; fy++){
+          if(bodyFree(fy)){
+            player.pos.y = fy;
+            player.vel.y = 0;
+            player.onGround = true;
+            break;
+          }
+        }
+      }
+    }
     // 🦶 支撑面采样：中心 + 四边 + 四角（半径略小于碰撞半径 0.3，避免蹭到邻格）
     const SR = 0.29;
     // 🔑 扫描起点用「本帧积分前的高度 prevY」而不是当前高度：
@@ -12278,31 +12302,7 @@ function updatePlayer(dt){
           player.onGround = false;
         }
       } else {
-        // 🧱 关键修复：找不到支撑面 → 说明身体嵌在实心方块内部
-        //    不能放任自由下落（会一路穿过整座山），必须向上顶到最近的空位
-        let pushed = false;
-        const bxc = Math.floor(player.pos.x), bzc = Math.floor(player.pos.z);
-        const bodyFree = (fy)=>{
-          for(let t = fy; t <= fy + 1; t++){       // 身体占 2 格（脚 + 头）
-            const bb = blockAt(bxc, t, bzc);
-            if(bb && bb.t !== BT.WATER && NO_COLLIDE_TYPES.indexOf(bb.t) < 0) return false;
-          }
-          return true;
-        };
-        let fy0 = Math.floor(player.pos.y);
-        if(!bodyFree(fy0)){
-          // 向上找第一个身体能站住的空位（最多 24 格，足够顶出任何山体）
-          for(let fy = fy0 + 1; fy <= fy0 + 24; fy++){
-            if(bodyFree(fy)){
-              player.pos.y = fy;
-              player.vel.y = 0;
-              player.onGround = true;
-              pushed = true;
-              break;
-            }
-          }
-        }
-        if(!pushed) player.onGround = false;
+        player.onGround = false;
       }
     }
   }
