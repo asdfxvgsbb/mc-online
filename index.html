@@ -1128,24 +1128,8 @@ window.__mp = (function(){
         p.obj.position.x += (p.tx - p.obj.position.x) * k;
         p.obj.position.z += (p.tz - p.obj.position.z) * k;
         p.obj.rotation.y = p.tyaw;
-        // 🎯 y 只能有「一个」目标值。
-        //    原来的写法是：先往网络传来的 ty 插值，再往本地地面推 ——
-        //    两个目标互相抵消，模型就僵在半空不动（diff 一直卡在 -5.2 就是这个原因）。
-        let targetY = p.ty;
-        try{
-          if(typeof window.__groundYAt === 'function'){
-            const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z);
-            if(gy !== null && gy !== undefined){
-              // 只在「明显悬空」时才拉回地面；低于本地地面说明他在挖洞/地下，绝不能拉上来
-              if(targetY - gy > 2.5) targetY = gy;
-            }
-          }
-        }catch(e){}
-        p.obj.position.y += (targetY - p.obj.position.y) * k;
-        // 🧱 远端玩家必须「站在自己那边真实的地形上」：
-        //   ① 先确保他周围区块已生成（否则地形是空的 → 看起来穿墙/悬空）
-        //   ② 再用 solid 索引查真实地面高度，把他贴上去
-        //   这两步缺一不可：只贴地不加载区块 → 查不到地面仍会悬空
+        // 🧱 ① 先确保他周围区块已生成：这是「悬空/穿墙」的根因
+        //    （他脚下方块没生成 → 看着悬空；他要穿过的墙没生成 → 看着穿墙）
         try{
           if(!p._chunkAt || performance.now() - p._chunkAt > 1500){
             p._chunkAt = performance.now();
@@ -1153,17 +1137,20 @@ window.__mp = (function(){
               window.__ensureChunksAt(p.obj.position.x, p.obj.position.z);
             }
           }
+        }catch(e){}
+        // 🎯 ② y 只能有一个目标值，否则「网络插值往回拉 + 贴地往上推」会僵在半空
+        let targetY = p.ty;
+        try{
           if(typeof window.__groundYAt === 'function'){
-            const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z);
+            const gy = window.__groundYAt(p.obj.position.x, p.obj.position.z, p.ty);
             if(gy !== null && gy !== undefined){
-              // 地面已可用 → 平滑贴到地面（不再限制距离，远近都贴）
-              const diff = gy - p.obj.position.y;
-              if(Math.abs(diff) > 0.05){
-                p.obj.position.y += diff * Math.min(1, dt*8);
-              }
+              // 只校正「明显悬空」：比本地地面高出 2.5 格以上
+              // 低于地面说明他在挖洞/地下，绝不能把他拉到地表
+              if(targetY - gy > 2.5) targetY = gy;
             }
           }
         }catch(e){}
+        p.obj.position.y += (targetY - p.obj.position.y) * k;
       }catch(e){}
       if(now - p.lastSeen > 8000) removePeer(id);
     });
@@ -4898,13 +4885,6 @@ function setHandItem(id, t){
   }
   handItem.renderOrder = 999;
   if(handItem.material && !Array.isArray(handItem.material)) handItem.material.depthTest = true;
-  // 🎯 关键修复：手持方块原来停在原点 (0,0,0)，而手臂是从原点沿 +z 伸出去的，
-  //    方块正好把手臂根部整个包住 → 看起来就是「方块插/粘在手里」。
-  //    这里把方块缩小并挪到手臂前端外侧，才是 MC 那种握在手里的样子。
-  if(t !== undefined && t !== null){
-    handItem.scale.setScalar(0.42);
-  }
-  handItem.position.set(0.0, 0.02, 0.88);
   g.add(handItem);
 }
 // 每帧更新（手持物体跟随、摆动、呼吸）
@@ -12866,20 +12846,50 @@ window.__onPlayerUpdate = function(){ if(typeof updateArmorUI === 'function') up
    4) 怪物只做「视觉镜像」：远端怪物不参与本机伤害结算，避免双倍掉血。
    ========================================================= */
 // —— 供联机模块读取当前世界信息 ——
+// —— 联机时显示「种子 + 坐标」，双方一眼就能确认是不是同一个世界 ——
+(function(){
+  let el = null;
+  function tick(){
+    try{
+      const online = (window.__mp && typeof window.__mp.isOnline === 'function' && window.__mp.isOnline());
+      if(!online){ if(el) el.style.display = 'none'; return; }
+      if(!el){
+        el = document.createElement('div');
+        el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;font:11px/1.4 monospace;'+
+          'color:#cfe9ff;background:rgba(0,0,0,.45);padding:3px 7px;border-radius:6px;pointer-events:none;';
+        document.body.appendChild(el);
+      }
+      el.style.display = 'block';
+      const wi = window.__getWorldInfo ? window.__getWorldInfo() : null;
+      const p  = window.__getPlayer ? window.__getPlayer() : null;
+      const seed = wi ? wi.seed : '?';
+      const x = p ? p.pos.x.toFixed(1) : '?';
+      const z = p ? p.pos.z.toFixed(1) : '?';
+      el.textContent = '🌱' + seed + '  X' + x + ' Z' + z;
+    }catch(e){}
+  }
+  setInterval(tick, 500);
+})();
 window.__getWorldInfo = function(){
   return { seed: String(WORLD_SEED), spx: spawnX, spz: spawnZ, sx: spawnX, sz: spawnZ };
 };
 // —— 供联机模块查询某水平位置的地面高度（远端玩家贴地用） ——
 // 返回该点向下扫描到的最上方实心方块的顶面 y；区块未加载时返回 null
-window.__groundYAt = function(wx, wz){
+window.__groundYAt = function(wx, wz, nearY){
   try{
     const bx = Math.floor(wx), bz = Math.floor(wz);
-    // 区块必须已生成，否则数据不可信
-    const ck = chunkKey(chunkOf(bx), chunkOf(bz));
-    if(typeof chunkBlocks !== 'undefined' && chunkBlocks && !chunkBlocks.has(ck)) return null;
-    for(let y = 48; y >= 0; y--){
-      if(solid.has(K(bx, y, bz))) return y + 1;   // 方块顶面
+    // 🎯 关键修复：原来是「从 y=48 一路往下扫第一个实心方块」，
+    //    结果扫到的是树叶/树冠 → 远端玩家被吸到树顶上，看起来像悬空。
+    //    现在改成：以远端玩家自己上报的高度为锚点，只在附近窗口内找地面。
+    if(typeof nearY === 'number' && isFinite(nearY)){
+      const top = Math.floor(nearY) + 2;
+      const bot = Math.max(0, Math.floor(nearY) - 10);
+      for(let y = top; y >= bot; y--){
+        if(solid.has(K(bx, y, bz))) return y + 1;   // 方块顶面
+      }
     }
+    // 兜底：用地形函数直接算（纯噪声，确定性，不需要区块已加载）
+    if(typeof heightAt === 'function') return heightAt(bx, bz) + 1;
     return null;
   }catch(e){ return null; }
 };
