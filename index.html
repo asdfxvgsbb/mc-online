@@ -687,8 +687,8 @@ if (typeof THREE === 'undefined') {
    4. 填到下面两行，重新上传即可联机
 */
 window.__mpCfg = {
-  url: '',   // 例如 https://abcdefgh.supabase.co
-  key: ''    // 例如 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  url: '',   // 待填：Supabase Project URL
+  key: ''    // 待填：publishable key
 };
 
 window.__mp = (function(){
@@ -6432,9 +6432,8 @@ function genChunkTerrain(cx, cz, bioMap){
          if(bi){ biomeOreBias = (Number(bi.temp||0.5) - 0.5) * 0.04 - (Number(bi.rain||0.5) * 0.02); }
        }catch(e){}
       for(let y=0;y<=h;y++){
-        // 🪨 基岩层：y=0 全实心（世界底），y=1 只有 25% 概率（MC 风格凹凸底面）
-        if(y === 0){ setBlock(x,y,z,BT.BEDROCK,ckc); continue; }
-        if(y === 1 && px_hash(x,z,9999) < 0.25){ setBlock(x,y,z,BT.BEDROCK,ckc); continue; }
+        // 🪨 基岩层已移除：世界底部改用普通石头，不再生成基岩
+        //    （旧存档里的基岩仍会被清除，见下方 SANITIZE 逻辑）
         // 🌋 深层岩浆池：y 2~6 的洞穴空腔里低概率灌岩浆（只在洞穴内，不破坏地表）
         if(y>=2 && y<=6 && y<h-3 && px_hash(x,y,z,7777) < 0.10 && isCave(x,y,z,h)){
           setBlock(x,y,z,BT.LAVA_BLOCK,ckc); continue;
@@ -6838,6 +6837,20 @@ function generateWorld(){
   ensureChunksAround(player.pos ? player.pos.x : 0, player.pos ? player.pos.z : 0);
   // 初始加载：一次性把队列泵完（玩家在开始界面时完成，避免看到地形逐步冒出）
   pumpChunkQueue(1e9);
+  // 🧹 基岩彻底清理：所有已生成区块里的 BEDROCK 一律换成石头
+  //    （兼容旧存档残留 + 防止任何遗漏路径再次写入基岩）
+  try{
+    let n = 0;
+    for(const b of blocks){
+      if(b.t === BT.BEDROCK){ b.t = BT.STONE; n++; }
+    }
+    if(n > 0){
+      solid.clear();
+      for(const b of blocks) solid.add(K(b.x,b.y,b.z));
+      rebuildAllInstances();
+      console.log('[SANITIZE] 清除基岩方块:', n);
+    }
+  }catch(e){ console.warn('sanitize bedrock fail', e); }
 }
 
 /* =========================================================
@@ -7641,8 +7654,10 @@ function resetPlayer(){
   function okPoint(tx, tz, level){
     const h = heightAt(tx,tz);
     if(h <= SEA_LEVEL+1) return null;            // 必须高于海平面
+    if(h < 5) return null;                       // 🛡️ 世界底部 5 格内不做出生点（防卡底层）
     ensureChunkAt(tx, tz);                        // 生成该点区块以便检查
     if(!blockAt(tx, h, tz)) return null;          // 地表层必须是实心方块
+    if(blockAt(tx, h, tz).t === BT.BEDROCK) return null;   // 🛡️ 绝不在基岩上出生
     // 头顶必须开阔
     const clearN = (level === 1) ? 3 : 2;
     for(let dy=1; dy<=clearN; dy++){ if(blockAt(tx, h+dy, tz)) return null; }
