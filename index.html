@@ -11136,7 +11136,10 @@ function attack(){
       updateTop(); updateHotbar();
       return;
     }
-    monsters.splice(monsters.indexOf(best),1);
+    // 🐛 必须校验 indexOf：best 可能已被同帧的其他逻辑（爆炸/环境伤害）移出数组，
+    //    indexOf 返回 -1 时 splice(-1,1) 会误删数组最后一个怪物（凭空消失、无掉落）
+    const _mi = monsters.indexOf(best);
+    if(_mi >= 0) monsters.splice(_mi,1);
     kills++;
     addXP(best.kind === 'enderman' ? 5 : 3);
     if(Math.random() < (0.4 + __lootingBonus*0.1)) addMat('iron_ore',1);      // 🔥 掉落铁矿石（需烧制）
