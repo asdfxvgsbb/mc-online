@@ -12777,6 +12777,9 @@ function animate(){
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
   if(running && !paused && !won){
+   // 🛡️ 核心更新必须整体保护：任一 updateXxx 抛错会让本帧剩余逻辑全部跳过，
+    //    持续性异常会导致玩家永久无响应（画面冻结但 rAF 还在跑）。
+    try{
     worldTime += dt;
     if(typeof extendedRuntimeTick === 'function') extendedRuntimeTick(dt);
     // 🔧 扩展模块 tick：函数定义在 load 回调内，需通过 window 安全调用
@@ -12843,6 +12846,17 @@ function animate(){
 
     if(!achDone['cave'] && player.pos.y < 6) checkAch('cave');
     if(!achDone['peak'] && player.pos.y > 26) checkAch('peak');
+    }catch(e){
+      // 🛡️ 单帧异常不再让整帧逻辑瘫痪：记录一次、提示一次，然后继续下一帧
+      window.__animErr = (window.__animErr||0) + 1;
+      if(window.__animErr === 1){
+        try{ console.error('[ANIM] 核心更新异常（已保护，游戏继续）:', e && e.message, e && e.stack); }catch(_){}
+        try{ toast('⚠️ 更新异常已捕获，游戏继续运行'); }catch(_){}
+      }
+      if(window.__animErr % 300 === 0){
+        try{ console.warn('[ANIM] 累计异常帧:', window.__animErr); }catch(_){}
+      }
+    }
 
     frameAcc += dt; frameCnt++;
     if(frameAcc >= 1){
