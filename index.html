@@ -10032,14 +10032,21 @@ function restart(){
 
   monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
-  if(portal && portal.mesh) disposeObj(portal.mesh);
+  // 🔴 必须同时释放灯笼点光源，否则重开世界后旧灯笼光源永久残留在场景里
+  villageLights.forEach(l=>disposeObj(l)); villageLights=[];
+  // 🔴 关键：dispose 之后必须把 portal 置 null。
+  //    否则下面 portal.active / portal.energy 访问的是已销毁的旧对象，
+  //    而且 spawnPortal() 会再 dispose 一次（二次 dispose），旧 eyeMeshes 也永不释放。
+  if(portal){
+    if(portal.mesh) disposeObj(portal.mesh);
+    if(portal.eyeMeshes) portal.eyeMeshes.forEach(m=>disposeObj(m));
+    portal = null;
+  }
   removeDragon(); inEnd = false; endPillars = [];
   resetPlayer();          // 先定出生点
   lastChunkX = 1e9; lastChunkZ = 1e9; lastNearVillageCount = -1;
   generateWorld();        // 再按出生点生成周围区块
-  portal.active = false;
-  if(portal.energy) portal.energy.material.color.set(0xEA80FC);
-  spawnPortal();
+  spawnPortal();          // 重新创建传送门（新 portal 由 spawnPortal 内部赋值）
   spawnChests();
   updateHP(); updateTop(); updateHotbar(); updateQuest(); refreshHotbarHighlight();
   startTime = performance.now();
