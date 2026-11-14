@@ -9976,6 +9976,10 @@ function newWorld(seedStr, name){
   monsters.forEach(m=>disposeObj(m.obj)); monsters=[];
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
   villageLights.forEach(l=>disposeObj(l)); villageLights=[];
+  // 🔴 动物与凋灵也必须清空：否则旧世界的动物会残留在新地形里，
+  //    凋灵会继续存活并攻击玩家（generateWorld 内部不清这两个）
+  animals.forEach(a=>disposeObj(a.obj)); animals=[];
+  if(typeof removeWither === 'function') removeWither();
   if(portal && portal.mesh){ disposeObj(portal.mesh); portal = null; }
   removeDragon(); inEnd = false; endPillars = [];
 
@@ -10034,6 +10038,9 @@ function restart(){
   villagers.forEach(v=>disposeObj(v.obj)); villagers=[];
   // 🔴 必须同时释放灯笼点光源，否则重开世界后旧灯笼光源永久残留在场景里
   villageLights.forEach(l=>disposeObj(l)); villageLights=[];
+  // 🔴 动物与凋灵同样必须清空（原因同 newWorld）
+  animals.forEach(a=>disposeObj(a.obj)); animals=[];
+  if(typeof removeWither === 'function') removeWither();
   // 🔴 关键：dispose 之后必须把 portal 置 null。
   //    否则下面 portal.active / portal.energy 访问的是已销毁的旧对象，
   //    而且 spawnPortal() 会再 dispose 一次（二次 dispose），旧 eyeMeshes 也永不释放。
